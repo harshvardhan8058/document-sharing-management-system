@@ -7,8 +7,8 @@ const router = express.Router();
 
 router.put(
   "/upload",
-  authenticate, // Use authenticate middleware
-  upload.single("file"), // Replace uploadMiddleware with upload
+  authenticate,
+  upload.single("file"),
   [
     body("title").notEmpty().withMessage("Title is required"),
     body("description").notEmpty().withMessage("Description is required"),
@@ -18,7 +18,7 @@ router.put(
 
 router.post(
   "/:id",
-  authenticate, // Use authenticate middleware
+  authenticate,
   [
     body("title").notEmpty().withMessage("Title is required"),
     body("description").notEmpty().withMessage("Description is required"),

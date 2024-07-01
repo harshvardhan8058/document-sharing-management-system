@@ -1,6 +1,5 @@
 const Document = require("../models/documentModel");
 const { validationResult } = require("express-validator");
-// Get a document by ID
 exports.getDocumentById = async (req, res) => {
   try {
     const document = await Document.findById(req.params.id);
@@ -12,7 +11,6 @@ exports.getDocumentById = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-// Upload a document
 exports.uploadDocument = async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -32,7 +30,6 @@ exports.uploadDocument = async (req, res) => {
   }
 };
 
-// Get all documents
 exports.getDocuments = async (req, res) => {
   try {
     const documents = await Document.find();
@@ -41,7 +38,6 @@ exports.getDocuments = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-// Download a document
 exports.downloadDocument = async (req, res) => {
   try {
     const document = await Document.findById(req.params.id);
@@ -55,7 +51,6 @@ exports.downloadDocument = async (req, res) => {
   }
 };
 
-// Delete a document
 exports.deleteDocument = async (req, res) => {
   try {
     const document = await Document.findByIdAndDelete(req.params.id);
@@ -68,7 +63,6 @@ exports.deleteDocument = async (req, res) => {
   }
 };
 
-// Update a document
 exports.updateDocument = async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
