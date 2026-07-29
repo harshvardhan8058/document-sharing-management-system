@@ -1,0 +1,292 @@
+/* ==========================================================================
+   Reset, document chrome and the animated backdrop
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--void);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+img,
+svg,
+video,
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color var(--t-fast) var(--ease-out);
+}
+
+a:hover {
+  color: var(--text);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  line-height: 1.2;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+ul,
+ol {
+  padding: 0;
+  list-style: none;
+}
+
+code,
+kbd,
+pre,
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  font-variant-ligatures: none;
+}
+
+/* -- focus ---------------------------------------------------------------- */
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* -- selection ----------------------------------------------------------- */
+
+::selection {
+  background: rgba(103, 232, 249, 0.28);
+  color: var(--text);
+}
+
+/* -- scrollbars ---------------------------------------------------------- */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-3) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border: 3px solid transparent;
+  border-radius: var(--r-full);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--line-strong);
+  background-clip: content-box;
+}
+
+/* ==========================================================================
+   Backdrop: three drifting aurora blobs over a perspective grid, plus a
+   film-grain overlay. Purely decorative, so it is aria-hidden and it collapses
+   to a static gradient when the user prefers reduced motion.
+   ========================================================================== */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 80% at 50% -20%, rgba(91, 140, 255, 0.16), transparent 60%),
+    var(--void);
+}
+
+.backdrop__blob {
+  position: absolute;
+  width: 46vw;
+  height: 46vw;
+  min-width: 380px;
+  min-height: 380px;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.5;
+  will-change: transform;
+}
+
+.backdrop__blob--1 {
+  top: -14%;
+  left: -8%;
+  background: radial-gradient(circle at 30% 30%, rgba(103, 232, 249, 0.75), transparent 65%);
+  animation: drift-1 26s var(--ease-out) infinite alternate;
+}
+
+.backdrop__blob--2 {
+  top: 22%;
+  right: -12%;
+  background: radial-gradient(circle at 60% 40%, rgba(168, 85, 247, 0.7), transparent 65%);
+  animation: drift-2 32s var(--ease-out) infinite alternate;
+}
+
+.backdrop__blob--3 {
+  bottom: -22%;
+  left: 28%;
+  background: radial-gradient(circle at 50% 50%, rgba(91, 140, 255, 0.6), transparent 65%);
+  animation: drift-3 38s var(--ease-out) infinite alternate;
+}
+
+:root[data-theme="daybreak"] .backdrop {
+  background:
+    radial-gradient(120% 80% at 50% -20%, rgba(91, 140, 255, 0.22), transparent 60%),
+    var(--void);
+}
+
+:root[data-theme="daybreak"] .backdrop__blob {
+  opacity: 0.32;
+}
+
+/* Perspective grid floor */
+.backdrop__grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(126, 156, 255, 0.07) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(126, 156, 255, 0.07) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(120% 100% at 50% 0%, #000 15%, transparent 75%);
+  -webkit-mask-image: radial-gradient(120% 100% at 50% 0%, #000 15%, transparent 75%);
+}
+
+/* Film grain — an inline SVG turbulence, so no image request. */
+.backdrop__grain {
+  position: absolute;
+  inset: -50%;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation: grain 7s steps(6) infinite;
+  pointer-events: none;
+}
+
+@keyframes drift-1 {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(12vw, 8vh, 0) scale(1.18); }
+}
+
+@keyframes drift-2 {
+  from { transform: translate3d(0, 0, 0) scale(1.1); }
+  to   { transform: translate3d(-14vw, 12vh, 0) scale(0.92); }
+}
+
+@keyframes drift-3 {
+  from { transform: translate3d(0, 0, 0) scale(0.95); }
+  to   { transform: translate3d(8vw, -10vh, 0) scale(1.22); }
+}
+
+@keyframes grain {
+  0%   { transform: translate(0, 0); }
+  20%  { transform: translate(-6%, 4%); }
+  40%  { transform: translate(4%, -6%); }
+  60%  { transform: translate(-3%, -3%); }
+  80%  { transform: translate(6%, 5%); }
+  100% { transform: translate(0, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop__blob,
+  .backdrop__grain {
+    animation: none;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* -- shared keyframes ---------------------------------------------------- */
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes slide-left {
+  from { opacity: 0; transform: translateX(24px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(103, 232, 249, 0.45); }
+  70%  { box-shadow: 0 0 0 12px rgba(103, 232, 249, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(103, 232, 249, 0); }
+}
+
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position: 200% 0; }
+}
+
+@keyframes sweep {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(300%); }
+}
