@@ -1,0 +1,139 @@
+/* ==========================================================================
+   Utilities — small, composable helpers. Loaded last so they can override.
+   ========================================================================== */
+
+.row { display: flex; align-items: center; }
+.row-start { display: flex; align-items: flex-start; }
+.row-baseline { display: flex; align-items: baseline; }
+.col { display: flex; flex-direction: column; }
+.wrap { flex-wrap: wrap; }
+.between { justify-content: space-between; }
+.center { justify-content: center; }
+.end { justify-content: flex-end; }
+.grow { flex: 1; min-width: 0; }
+.none { flex: none; }
+
+.gap-1 { gap: var(--space-1); }
+.gap-2 { gap: var(--space-2); }
+.gap-3 { gap: var(--space-3); }
+.gap-4 { gap: var(--space-4); }
+.gap-5 { gap: var(--space-5); }
+.gap-6 { gap: var(--space-6); }
+
+.mt-1 { margin-top: var(--space-1); }
+.mt-2 { margin-top: var(--space-2); }
+.mt-3 { margin-top: var(--space-3); }
+.mt-4 { margin-top: var(--space-4); }
+.mt-5 { margin-top: var(--space-5); }
+.mt-auto { margin-top: auto; }
+.ml-auto { margin-left: auto; }
+
+.text-xs { font-size: var(--fs-xs); }
+.text-sm { font-size: var(--fs-sm); }
+.text-md { font-size: var(--fs-md); }
+.text-lg { font-size: var(--fs-lg); }
+.text-xl { font-size: var(--fs-xl); }
+
+.muted { color: var(--text-muted); }
+.dim { color: var(--text-dim); }
+.danger { color: var(--danger); }
+.success { color: var(--success); }
+.warning { color: var(--warning); }
+.accent { color: var(--accent); }
+
+.w-100 { width: 100%; }
+.nums { font-variant-numeric: tabular-nums; }
+.semi { font-weight: 550; }
+.bold { font-weight: 650; }
+.upper { text-transform: uppercase; letter-spacing: 0.08em; }
+.center-text { text-align: center; }
+.right-text { text-align: right; }
+.pre-wrap { white-space: pre-wrap; }
+.break-word { word-break: break-word; overflow-wrap: anywhere; }
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.divider {
+  height: 1px;
+  background: var(--line);
+  border: none;
+}
+
+.divider--v {
+  width: 1px;
+  height: 22px;
+  background: var(--line);
+  border: none;
+  flex: none;
+}
+
+.scroll-y {
+  overflow-y: auto;
+}
+
+.relative { position: relative; }
+
+/* Visually hidden but available to assistive technology. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Staggered entrance for lists — set --i on each child. */
+.stagger > * {
+  animation-delay: calc(var(--i, 0) * 38ms);
+}
+
+.link-quiet {
+  color: var(--text-muted);
+}
+
+.link-quiet:hover {
+  color: var(--accent);
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.copy-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--sunken-strong);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  overflow: hidden;
+}
+
+.copy-field__value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

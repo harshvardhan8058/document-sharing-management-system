@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Nothing here needs write access to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Unit tests and the end-to-end API suite on the zero-config local driver.
+  test:
+    name: Tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "22"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install server dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: End-to-end API suite (local driver)
+        run: npm run verify
+
+  # The same API suite against a real MongoDB, so the mongo driver is not
+  # verified only by inspection.
+  mongo:
+    name: API suite (MongoDB)
+    runs-on: ubuntu-latest
+
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      # The harness redirects to a throwaway database and drops it afterwards,
+      # so this is safe to point at any cluster.
+      - name: End-to-end API suite (mongo driver)
+        env:
+          DB_DRIVER: mongo
+          MONGODB_URI: mongodb://127.0.0.1:27017
+        run: npm run verify
+
+  # The client has to actually compile, and the server has to serve it.
+  build:
+    name: Client build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+
+      - run: npm ci
+
+      - name: Install client dependencies
+        run: npm ci --prefix client
+
+      - name: Build the client
+        run: npm run client:build
+
+      - name: Confirm the built app is served
+        run: |
+          node server/index.js &
+          SERVER_PID=$!
+          for _ in $(seq 1 40); do
+            curl -sf -m 1 http://127.0.0.1:4000/api/health >/dev/null && break
+            sleep 0.5
+          done
+          echo "Health:"
+          curl -sf http://127.0.0.1:4000/api/health
+          echo
+          echo "Checking the SPA and its assets are served..."
+          curl -sf -o /dev/null -w 'index.html %{http_code}\n' http://127.0.0.1:4000/
+          curl -sf -o /dev/null -w 'deep link  %{http_code}\n' http://127.0.0.1:4000/documents
+          ASSET=$(grep -o '/assets/index-[^"]*\.js' client/dist/index.html | head -1)
+          curl -sf -o /dev/null -w "bundle     %{http_code}\n" "http://127.0.0.1:4000$ASSET"
+          kill $SERVER_PID
+        env:
+          # A build check, not a deployment: an explicit secret keeps the boot
+          # path identical to production without needing a real one.
+          NODE_ENV: production
+          JWT_SECRET: ci-build-check-secret-not-used-anywhere
+          PORT: "4000"

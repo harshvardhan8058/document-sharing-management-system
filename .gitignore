@@ -1,5 +1,27 @@
-# Ignore .env file
+# Environment
 .env
+.env.local
+.env.*.local
 
-# Ignore node_modules directory
+# Dependencies
 node_modules/
+
+# Runtime artefacts.
+# Leading slashes matter: a bare `data/` would also ignore `server/data/`,
+# which is source code.
+/uploads/
+/data/
+/logs/
+*.log
+
+# Verification sandbox (scripts/verify-api.js)
+/.verify/
+
+# Client build output
+client/dist/
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,21 +1,44 @@
 {
-  "name": "backend",
-  "version": "1.0.0",
-  "description": "",
-  "main": "app.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "name": "document-sharing-management-system",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Secure document sharing and management platform — Express/MongoDB API with a futuristic React dashboard.",
+  "main": "server/index.js",
+  "engines": {
+    "node": ">=18.17"
   },
-  "author": "",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "seed": "node scripts/seed.js",
+    "test": "node --test tests/*.test.js",
+    "verify": "node scripts/verify-api.js",
+    "check": "npm test && npm run verify",
+    "client:install": "npm --prefix client install",
+    "client:dev": "npm --prefix client run dev",
+    "client:build": "npm --prefix client run build",
+    "build": "npm run client:install && npm run client:build",
+    "setup": "npm install && npm run build"
+  },
+  "keywords": [
+    "document-management",
+    "file-sharing",
+    "express",
+    "mongodb",
+    "react"
+  ],
+  "author": "harshvardhan8058",
   "license": "ISC",
   "dependencies": {
-    "body-parser": "^1.20.2",
+    "compression": "^1.7.5",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "express-rate-limit": "^7.3.1",
-    "express-validator": "^7.1.0",
-    "mongoose": "^8.4.3",
-    "multer": "^1.4.5-lts.1"
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "express-validator": "^7.2.1",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.9.5",
+    "multer": "^2.0.0"
   }
 }
