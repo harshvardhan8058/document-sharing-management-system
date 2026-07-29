@@ -7,6 +7,8 @@ const crypto = require("crypto");
 
 const config = require("../config/env");
 const logger = require("../utils/logger");
+const ApiError = require("../utils/ApiError");
+const signatures = require("../utils/signatures");
 
 const UPLOAD_DIR = config.uploads.dir;
 
@@ -83,6 +85,46 @@ async function removeFiles(storedNames = []) {
   return results.filter(Boolean).length;
 }
 
+/** Read the leading bytes of a file, for format inspection. */
+async function readHead(absolutePath, byteCount) {
+  const handle = await fsp.open(absolutePath, "r");
+  try {
+    const buffer = Buffer.alloc(byteCount);
+    const { bytesRead } = await handle.read(buffer, 0, byteCount, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Reject an upload whose bytes contradict its name.
+ *
+ * Runs against the file multer has already written, so a rejection here throws
+ * and the error middleware unlinks it — nothing untrusted is kept.
+ *
+ * @param {{path: string, originalname: string}} file a multer file
+ */
+async function assertContentMatchesExtension(file) {
+  if (!file || !file.path) return;
+
+  let head;
+  try {
+    head = await readHead(file.path, signatures.probeLength());
+  } catch (err) {
+    logger.warn(`Could not inspect upload "${file.originalname}": ${err.message}`);
+    return; // never fail an upload because inspection itself broke
+  }
+
+  const verdict = signatures.inspect(file.originalname, head);
+  if (verdict.ok) return;
+
+  throw new ApiError(415, verdict.message, {
+    code: verdict.code,
+    details: [{ field: "file", detected: verdict.detected, filename: file.originalname }],
+  });
+}
+
 /** Read a text file with a hard cap, used for inline text previews. */
 async function readTextPreview(storedName, maxBytes = 128 * 1024) {
   const handle = await fsp.open(pathFor(storedName), "r");
@@ -116,6 +158,22 @@ async function usageOnDisk() {
   }
 }
 
+/** Every filename currently sitting in the upload directory. */
+async function listStoredFiles() {
+  try {
+    const names = await fsp.readdir(UPLOAD_DIR);
+    const files = await Promise.all(
+      names.map(async (name) => {
+        const stats = await fsp.stat(path.join(UPLOAD_DIR, name)).catch(() => null);
+        return stats && stats.isFile() ? name : null;
+      })
+    );
+    return files.filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 module.exports = {
   UPLOAD_DIR,
   pathFor,
@@ -125,6 +183,9 @@ module.exports = {
   statOf,
   removeFile,
   removeFiles,
+  readHead,
+  assertContentMatchesExtension,
   readTextPreview,
   usageOnDisk,
+  listStoredFiles,
 };

@@ -93,6 +93,7 @@ exports.downloadByToken = asyncHandler(async (req, res, next) => {
   const { share, document, absolutePath } = await shareService.fileByToken({
     token: req.params.token,
     password: readLinkPassword(req),
+    claimDownload: true,
   });
 
   res.on("finish", () => {

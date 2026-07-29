@@ -91,8 +91,12 @@ function isInlinePreviewable(mimeType = "") {
  * then clamp the length. Never trust `file.originalname`.
  */
 function sanitizeFilename(original = "file") {
-  const base = path
-    .basename(String(original))
+  // Take the last segment of either separator style. `path.basename` only knows
+  // the host's convention, so on Linux a Windows path such as
+  // `..\..\windows\system32` would otherwise survive whole.
+  const lastSegment = String(original).split(/[/\\]/).pop() || "";
+
+  const base = lastSegment
     .replace(/[\u0000-\u001f\u007f]/g, "")
     .replace(/[/\\?%*:|"<>]/g, "-")
     .replace(/\s+/g, " ")

@@ -18,15 +18,28 @@ function accentFor(email) {
 
 const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
 
-/** Strip the password hash and add derived fields. Never return a raw user record. */
+/**
+ * Strip secrets and add derived fields. Never return a raw user record.
+ * `tokenVersion` is internal bookkeeping and is not part of the API surface.
+ */
 function publicUser(user) {
   if (!user) return null;
-  const { passwordHash, ...rest } = user;
+  const { passwordHash, tokenVersion, ...rest } = user;
   return {
     ...rest,
     fullName: `${user.firstName} ${user.lastName}`.trim(),
     initials: `${(user.firstName || "?")[0]}${(user.lastName || "")[0] || ""}`.toUpperCase(),
   };
+}
+
+/** Mint a token from a raw stored record, so the token version always matches. */
+function tokenFor(record) {
+  return signAccessToken({
+    id: record.id,
+    email: record.email,
+    role: record.role,
+    tokenVersion: Number(record.tokenVersion) || 0,
+  });
 }
 
 async function findByEmail(email) {
@@ -61,6 +74,7 @@ async function register({ firstName, lastName, email, password }, req) {
     // Every field is set explicitly so a record looks identical whichever
     // driver wrote it — the local store has no schema to fall back on.
     storageQuotaBytes: config.storage.quotaBytes,
+    tokenVersion: 0,
     isActive: true,
     lastLoginAt: new Date().toISOString(),
   });
@@ -68,7 +82,20 @@ async function register({ firstName, lastName, email, password }, req) {
   const user = publicUser(created);
   await activityService.record("user.registered", { req, actor: user });
 
-  return { user, token: signAccessToken(user), passwordStrength: scorePassword(password) };
+  // Documents shared with this address before the account existed are matched by
+  // email at access-resolution time; stamping the id on them now means the
+  // recipient shows up correctly in the owner's share list straight away.
+  const pendingShares = await db.shares.updateMany(
+    { type: "user", email: normalized, userId: null, revokedAt: null },
+    { userId: created.id }
+  );
+
+  return {
+    user,
+    token: tokenFor(created),
+    passwordStrength: scorePassword(password),
+    pendingShares,
+  };
 }
 
 /**
@@ -96,7 +123,7 @@ async function login({ email, password }, req) {
 
   await activityService.record("user.login", { req, actor: user });
 
-  return { user, token: signAccessToken(user) };
+  return { user, token: tokenFor(updated || record) };
 }
 
 async function getById(userId) {
@@ -138,12 +165,39 @@ async function changePassword(userId, { currentPassword, newPassword }, req) {
     });
   }
 
-  await db.users.updateById(userId, { passwordHash: await hashPassword(newPassword) });
+  // Rotating the password ends every other session. The caller gets a freshly
+  // signed token back so the browser they are sitting at stays signed in.
+  const updated = await db.users.updateById(userId, {
+    passwordHash: await hashPassword(newPassword),
+    tokenVersion: (Number(record.tokenVersion) || 0) + 1,
+  });
 
-  const user = publicUser(record);
-  await activityService.record("user.password_changed", { req, actor: user });
+  const user = publicUser(updated);
+  await activityService.record("user.password_changed", {
+    req,
+    actor: user,
+    detail: "Other sessions were signed out",
+  });
 
-  return { changed: true, strength: scorePassword(newPassword) };
+  return { changed: true, strength: scorePassword(newPassword), token: tokenFor(updated) };
+}
+
+/**
+ * Invalidate every token issued to this account, including the caller's.
+ * Used by "sign out everywhere" after a suspected credential leak.
+ */
+async function revokeAllSessions(userId, req) {
+  const record = await db.users.findById(userId);
+  if (!record) throw ApiError.notFound("User not found");
+
+  const updated = await db.users.updateById(userId, {
+    tokenVersion: (Number(record.tokenVersion) || 0) + 1,
+  });
+
+  const user = publicUser(updated);
+  await activityService.record("user.sessions_revoked", { req, actor: user });
+
+  return { revoked: true, tokenVersion: updated.tokenVersion };
 }
 
 /**
@@ -185,6 +239,7 @@ module.exports = {
   getById,
   updateProfile,
   changePassword,
+  revokeAllSessions,
   directory,
   publicUser,
   findByEmail,

@@ -23,6 +23,12 @@ async function resolveUser(req) {
     throw ApiError.forbidden("This account has been deactivated", { code: "ACCOUNT_DISABLED" });
   }
 
+  // A token minted before the account's version was bumped is dead, even though
+  // its signature and expiry are still perfectly valid.
+  if ((Number(payload.tv) || 0) !== (Number(user.tokenVersion) || 0)) {
+    throw ApiError.unauthorized("This session has been signed out", { code: "TOKEN_REVOKED" });
+  }
+
   return {
     id: user.id,
     email: user.email,
@@ -30,6 +36,7 @@ async function resolveUser(req) {
     firstName: user.firstName,
     lastName: user.lastName,
     fullName: `${user.firstName} ${user.lastName}`.trim(),
+    tokenVersion: Number(user.tokenVersion) || 0,
   };
 }
 

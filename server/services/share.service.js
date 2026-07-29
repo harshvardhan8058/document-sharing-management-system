@@ -142,11 +142,24 @@ async function shareWithUser({ id, user, body = {}, req, origin }) {
   };
 }
 
-/** Create a public link. Multiple links per document are allowed (different terms). */
+/**
+ * Create a public link. Multiple links per document are allowed (different terms).
+ *
+ * Links are always read-only. The API used to accept `permission: "edit"` and
+ * echo it back, but no anonymous write endpoint exists — it promised a capability
+ * that did not exist, so it is rejected rather than silently downgraded.
+ */
 async function createLink({ id, user, body = {}, req, origin }) {
   const { document } = await access.loadDocumentFor(id, user, "manage");
 
-  const permission = body.permission === "edit" ? "edit" : "view";
+  if (body.permission !== undefined && body.permission !== null && body.permission !== "view") {
+    throw ApiError.unprocessable(
+      "Public links are read-only. Share with a specific person to grant editing.",
+      { code: "LINK_PERMISSION_UNSUPPORTED", details: [{ field: "permission", message: 'Must be "view"' }] }
+    );
+  }
+
+  const permission = "view";
   const expiresAt = resolveExpiry(body);
 
   let maxDownloads = null;
@@ -301,23 +314,77 @@ async function viewByToken({ token, password, req }) {
   };
 }
 
-/** Resolve a token to an on-disk file for streaming. */
-async function fileByToken({ token, password }) {
+/**
+ * Atomically claim one download against a link's remaining allowance.
+ *
+ * The obvious implementation — check `downloadCount < maxDownloads`, stream the
+ * file, then increment — is wrong twice over. The increment was a
+ * read-modify-write, so concurrent downloads overwrote each other's counts (ten
+ * parallel requests recorded three). And because the check and the increment were
+ * separate steps, several requests could pass the check before any of them
+ * incremented, serving more downloads than the cap allowed.
+ *
+ * This claims the slot *before* streaming, using a compare-and-swap on the count
+ * we just read. A losing writer retries against the fresh value. The trade-off is
+ * deliberate: a transfer that dies mid-stream still consumes its slot, so the cap
+ * fails closed rather than leaking downloads.
+ *
+ * @returns {Promise<object>} the share row with the claim applied
+ */
+async function claimLinkDownload(shareId, { attempts = 6 } = {}) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const current = await db.shares.findById(shareId);
+
+    if (!current) throw ApiError.notFound("This link is not valid", { code: "LINK_NOT_FOUND" });
+    if (current.revokedAt) throw ApiError.forbidden("This link has been revoked", { code: "LINK_REVOKED" });
+    if (current.expiresAt && new Date(current.expiresAt).getTime() <= Date.now()) {
+      throw ApiError.forbidden("This link has expired", { code: "LINK_EXPIRED" });
+    }
+
+    const used = current.downloadCount || 0;
+    const cap = current.maxDownloads;
+
+    if (cap !== null && cap !== undefined && used >= cap) {
+      throw ApiError.forbidden("This link has reached its download limit", { code: "LINK_EXHAUSTED" });
+    }
+
+    // Only succeeds while the count is still what we just read.
+    const claimed = await db.shares.findOneAndIncrement(
+      { id: shareId, downloadCount: used },
+      { downloadCount: 1 },
+      { lastAccessedAt: new Date().toISOString() }
+    );
+    if (claimed) return claimed;
+    // Someone else claimed it first — re-read and try again.
+  }
+
+  throw new ApiError(409, "This link is busy — please try again", { code: "LINK_CONTENDED" });
+}
+
+/**
+ * Resolve a token to an on-disk file for streaming.
+ *
+ * @param {{claimDownload?: boolean}} options `claimDownload` reserves one of the
+ *   link's remaining downloads. Previewing must not — only an actual download
+ *   spends the allowance.
+ */
+async function fileByToken({ token, password, claimDownload = false }) {
   const { share, document } = await resolveToken(token, { password });
 
   if (!(await storage.exists(document.storedName))) {
     throw ApiError.notFound("The stored file is missing from disk", { code: "FILE_MISSING" });
   }
 
-  return { share, document, absolutePath: storage.pathFor(document.storedName) };
+  const resolved = claimDownload ? await claimLinkDownload(share.id) : share;
+
+  return { share: resolved, document, absolutePath: storage.pathFor(document.storedName) };
 }
 
-/** Record a download made through a public link. */
+/**
+ * Record the document-side effects of a link download.
+ * The share counter was already claimed by {@link claimLinkDownload}.
+ */
 async function countLinkDownload({ share, document, req }) {
-  await db.shares.updateById(share.id, {
-    downloadCount: (share.downloadCount || 0) + 1,
-    lastAccessedAt: new Date().toISOString(),
-  });
   await db.documents.increment(document.id, { downloadCount: 1 });
   await activity.record("document.downloaded", {
     req,
@@ -335,6 +402,7 @@ module.exports = {
   resolveToken,
   viewByToken,
   fileByToken,
+  claimLinkDownload,
   countLinkDownload,
   presentShare,
   PERMISSIONS,

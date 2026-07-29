@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { matchPath, normalizeTo } from "./paths";
 
 /**
  * A ~150 line client-side router.
@@ -22,24 +23,8 @@ function readLocation() {
   return { pathname, search, hash };
 }
 
-/**
- * Coerce a destination into a safe, internal path.
- * Returns `"/"` for anything that tries to leave the origin.
- */
-export function normalizeTo(to) {
-  if (typeof to !== "string" || to === "") return "/";
-
-  // Backslashes are treated as slashes by browsers in some positions — the
-  // exact trick behind the "open redirect via backslash" advisory.
-  const candidate = to.replace(/\\/g, "/");
-
-  // Absolute URLs and scheme-relative URLs are rejected outright.
-  if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(candidate)) return "/";
-  if (candidate.startsWith("//")) return "/";
-  if (!candidate.startsWith("/")) return `/${candidate}`;
-
-  return candidate;
-}
+// Path parsing lives in a plain module so it can be unit tested directly.
+export { normalizeTo, matchPath };
 
 export function Router({ children }) {
   const [location, setLocation] = useState(readLocation);
@@ -77,39 +62,6 @@ function useRouter() {
 export const useLocation = () => useRouter().location;
 export const useNavigate = () => useRouter().navigate;
 export const useParams = () => useContext(ParamsContext);
-
-/**
- * Match a pattern such as `/documents/:id` or `/settings/*` against a pathname.
- * @returns {object|null} captured params, or null when it does not match
- */
-export function matchPath(pattern, pathname) {
-  if (pattern === "*") return {};
-
-  const patternParts = pattern.split("/").filter(Boolean);
-  const pathParts = decodeURI(pathname).split("/").filter(Boolean);
-
-  const params = {};
-
-  for (let index = 0; index < patternParts.length; index += 1) {
-    const expected = patternParts[index];
-
-    if (expected === "*") return params; // catch-all consumes the remainder
-
-    const actual = pathParts[index];
-    if (actual === undefined) return null;
-
-    if (expected.startsWith(":")) {
-      params[expected.slice(1)] = actual;
-    } else if (expected !== actual) {
-      return null;
-    }
-  }
-
-  // Reject extra trailing segments unless the pattern ended in a catch-all.
-  if (pathParts.length > patternParts.length) return null;
-
-  return params;
-}
 
 /** Renders the first `<Route>` child whose `path` matches the current URL. */
 export function Routes({ children }) {

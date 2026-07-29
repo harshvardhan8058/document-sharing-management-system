@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Spinner } from "./ui";
+import { Icon } from "../lib/icons";
 import { api } from "../lib/api";
 
 /**
@@ -114,8 +115,23 @@ export default function DocumentPreview({ document: doc, version, publicToken, p
   if (isPdf) {
     return (
       <div className="col gap-2">
+        {/*
+          `<object>` rather than `<iframe>`: browsers without a built-in PDF
+          viewer (and iOS Safari, which refuses to render a blob PDF inline)
+          render the fallback children instead of a blank white rectangle.
+        */}
         <div className="preview">
-          <iframe src={state.url} title={`Preview of ${doc.title}`} />
+          <object data={state.url} type="application/pdf" aria-label={`Preview of ${doc.title}`}>
+            <div className="empty" style={{ padding: "var(--space-6)" }}>
+              <span className="empty__icon">
+                <Icon name="file" size={24} />
+              </span>
+              <div>
+                <div className="empty__title">This browser cannot display PDFs inline</div>
+                <p className="empty__text mt-1">Open it in a new tab or download it instead.</p>
+              </div>
+            </div>
+          </object>
         </div>
         <Button
           variant="ghost"

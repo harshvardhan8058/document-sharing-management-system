@@ -6,6 +6,9 @@ const { formatBytes } = require("../utils/files");
 const access = require("./access.service");
 const activity = require("./activity.service");
 const storage = require("./storage.service");
+const documentService = require("./document.service");
+const adminService = require("./admin.service");
+const maintenance = require("./maintenance.service");
 
 const DAY = 86_400_000;
 
@@ -59,7 +62,8 @@ async function overview({ user, days = 14 }) {
   ] = await Promise.all([
     db.documents.count(mine),
     db.documents.count({ ownerId: user.id, status: "trashed" }),
-    db.documents.sum("size", mine),
+    // Same accounting the quota check uses: every stored version, trash included.
+    documentService.usageBytesFor(user.id),
     db.documents.sum("downloadCount", mine),
     db.documents.sum("viewCount", mine),
     db.documents.groupCount("category", mine),
@@ -75,8 +79,7 @@ async function overview({ user, days = 14 }) {
 
   // Accounts created before the quota became configurable fall back to the
   // deployment default rather than reporting a nonsensical "0 B" allowance.
-  const record = await db.users.findById(user.id);
-  const quotaBytes = Number(record?.storageQuotaBytes) || config.storage.quotaBytes;
+  const quotaBytes = await documentService.quotaBytesFor(user.id);
 
   const slim = (document) => ({
     id: document.id,
@@ -135,6 +138,10 @@ async function systemHealth() {
     storage.usageOnDisk(),
   ]);
 
+  // Compared filename sets, not a subtraction. The old
+  // `diskFiles - documentCount` treated every historical version as an orphan.
+  const reconciliation = await adminService.reconcileStorage();
+
   return {
     driver: db.driver,
     users,
@@ -145,8 +152,15 @@ async function systemHealth() {
     trackedBytes: bytes,
     trackedLabel: formatBytes(bytes),
     disk: { ...disk, label: formatBytes(disk.bytes) },
-    /** Files on disk that no document references — usually a sign of a failed cleanup. */
-    orphanedFiles: Math.max(0, disk.files - (documents + trashed)),
+    storageReconciliation: reconciliation,
+    orphanedFiles: reconciliation.orphanedFiles,
+    missingFiles: reconciliation.missingFiles,
+    retention: {
+      activityDays: config.retention.activityDays,
+      trashDays: config.retention.trashDays,
+      sweepIntervalHours: config.retention.sweepIntervalHours,
+      lastRun: maintenance.lastRunSnapshot(),
+    },
   };
 }
 

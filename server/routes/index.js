@@ -10,6 +10,7 @@ const authRoutes = require("./auth.routes");
 const documentRoutes = require("./document.routes");
 const shareRoutes = require("./share.routes");
 const statsRoutes = require("./stats.routes");
+const adminRoutes = require("./admin.routes");
 
 const router = express.Router();
 
@@ -40,7 +41,8 @@ router.get("/", (req, res) => {
         "POST /api/auth/login": "Exchange credentials for a bearer token",
         "GET /api/auth/me": "Current user",
         "PATCH /api/auth/me": "Update profile",
-        "POST /api/auth/change-password": "Rotate password",
+        "POST /api/auth/change-password": "Rotate password (ends other sessions, returns a fresh token)",
+        "POST /api/auth/logout-all": "Invalidate every token for this account",
         "GET /api/auth/directory": "People picker for sharing",
         "GET /api/auth/me/activity": "Your audit trail",
       },
@@ -75,6 +77,13 @@ router.get("/", (req, res) => {
         "GET /api/stats/activity": "Instance-wide audit feed (admin)",
         "GET /api/stats/system": "Instance health (admin)",
       },
+      administration: {
+        "GET /api/admin/users": "List accounts with storage footprint (admin)",
+        "PATCH /api/admin/users/:id": "Change role, active state or quota (admin)",
+        "GET /api/admin/storage": "Reconcile database records against files on disk (admin)",
+        "POST /api/admin/storage/purge-orphans": "Delete unreferenced files (admin)",
+        "POST /api/admin/maintenance/run": "Run the retention sweeps now (admin)",
+      },
     },
   });
 });
@@ -83,5 +92,6 @@ router.use("/auth", authRoutes);
 router.use("/documents", documentRoutes);
 router.use("/share", shareRoutes);
 router.use("/stats", statsRoutes);
+router.use("/admin", adminRoutes);
 
 module.exports = router;

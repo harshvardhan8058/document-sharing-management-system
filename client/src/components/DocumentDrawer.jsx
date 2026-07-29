@@ -20,6 +20,7 @@ import DocumentPreview from "./DocumentPreview";
 import { Icon } from "../lib/icons";
 import { api } from "../lib/api";
 import { useToast } from "../context/ToastContext";
+import { useFocusTrap } from "../lib/useFocusTrap";
 import {
   categoryLabel,
   formatBytes,
@@ -79,14 +80,16 @@ export default function DocumentDrawer({ documentId, onClose, onChanged, onShare
     load();
   }, [load]);
 
-  // Escape closes the drawer, matching the modal behaviour.
-  useEffect(() => {
-    const onKeyDown = (event) => {
-      if (event.key === "Escape" && !confirm) onClose?.();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose, confirm]);
+  /**
+   * Trap focus in the drawer, but stand down while a confirmation dialog is open
+   * on top of it — otherwise two traps fight over Tab and Escape.
+   */
+  const drawerRef = useFocusTrap(!confirm, {
+    onEscape: () => onClose?.(),
+    // The drawer is a panel rather than a form; stealing focus on every open
+    // would fight the click that opened it.
+    autoFocus: false,
+  });
 
   const doc = detail?.document;
 
@@ -186,7 +189,14 @@ export default function DocumentDrawer({ documentId, onClose, onChanged, onShare
 
   if (loading || !doc) {
     return (
-      <aside className="drawer" role="dialog" aria-label="Document details" aria-busy="true">
+      <aside
+        className="drawer"
+        role="dialog"
+        aria-label="Document details"
+        aria-busy="true"
+        tabIndex={-1}
+        ref={drawerRef}
+      >
         <div className="drawer__header col gap-3">
           <Skeleton height={20} width="60%" />
           <Skeleton height={13} width="40%" />
@@ -209,7 +219,14 @@ export default function DocumentDrawer({ documentId, onClose, onChanged, onShare
     <>
       <div className="sidebar-scrim" onClick={onClose} aria-hidden="true" />
 
-      <aside className="drawer" role="dialog" aria-label={`Details for ${doc.title}`}>
+      <aside
+        className="drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Details for ${doc.title}`}
+        tabIndex={-1}
+        ref={drawerRef}
+      >
         <header className="drawer__header">
           <div className="row-start between gap-3">
             <div className="row-start gap-3 grow" style={{ minWidth: 0 }}>

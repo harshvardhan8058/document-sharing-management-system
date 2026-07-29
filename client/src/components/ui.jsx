@@ -1,6 +1,7 @@
-import { forwardRef, useEffect, useId, useRef, useState } from "react";
+import { forwardRef, useEffect, useId, useState } from "react";
 import { Icon } from "../lib/icons";
 import { copyText } from "../lib/format";
+import { useFocusTrap } from "../lib/useFocusTrap";
 
 /* ==========================================================================
    Primitives shared across every page.
@@ -286,36 +287,8 @@ export function Tabs({ tabs, value, onChange }) {
  * are not stranded behind the overlay.
  */
 export function Modal({ open, onClose, title, subtitle, footer, children, width = "" }) {
-  const panelRef = useRef(null);
-  const restoreRef = useRef(null);
-
-  useEffect(() => {
-    if (!open) return undefined;
-
-    restoreRef.current = document.activeElement;
-
-    const onKeyDown = (event) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        onClose?.();
-      }
-    };
-
-    document.addEventListener("keydown", onKeyDown);
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    const focusTarget = panelRef.current?.querySelector(
-      "input:not([type=hidden]), textarea, select, button:not([data-autofocus=skip])"
-    );
-    focusTarget?.focus();
-
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = previousOverflow;
-      if (restoreRef.current instanceof HTMLElement) restoreRef.current.focus();
-    };
-  }, [open, onClose]);
+  // Traps Tab, locks background scroll, restores focus on close.
+  const panelRef = useFocusTrap(open, { onEscape: onClose });
 
   if (!open) return null;
 
@@ -326,6 +299,7 @@ export function Modal({ open, onClose, title, subtitle, footer, children, width 
         role="dialog"
         aria-modal="true"
         aria-label={typeof title === "string" ? title : undefined}
+        tabIndex={-1}
         ref={panelRef}
       >
         <div className="modal__header">

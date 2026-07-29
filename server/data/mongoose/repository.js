@@ -102,16 +102,48 @@ function createMongooseRepository(model) {
     /**
      * Atomic field increments — a read-modify-write would lose counts under
      * concurrent downloads.
+     *
+     * `set` applies alongside the increment in the same operation, so a counter
+     * and its "last touched" timestamp cannot drift apart.
      */
-    async increment(id, increments = {}) {
+    async increment(id, increments = {}, set = {}) {
       const updated = await model
         .findByIdAndUpdate(
           id,
-          { $inc: increments, $set: { updatedAt: new Date().toISOString() } },
+          { $inc: increments, $set: { ...set, updatedAt: new Date().toISOString() } },
           { new: true }
         )
         .lean();
       return toPublic(updated);
+    },
+
+    /**
+     * Compare-and-swap increment: apply `increments` only to a document that
+     * still matches `filter`, and report whether the write landed.
+     *
+     * This is the primitive behind claiming a limited resource — a share link's
+     * remaining downloads. Checking a limit and then incrementing it as two
+     * separate calls lets two concurrent requests both pass the check; folding
+     * the expected state into the filter makes the claim atomic.
+     *
+     * @returns {Promise<object|null>} the updated document, or null if another
+     *   writer got there first.
+     */
+    async findOneAndIncrement(filter = {}, increments = {}, set = {}) {
+      const updated = await model
+        .findOneAndUpdate(
+          translateFilter(filter),
+          { $inc: increments, $set: { ...set, updatedAt: new Date().toISOString() } },
+          { new: true }
+        )
+        .lean();
+      return toPublic(updated);
+    },
+
+    /** Apply the same patch to every matching document. Returns the count. */
+    async updateMany(filter = {}, patch = {}) {
+      const result = await model.updateMany(translateFilter(filter), buildUpdate(patch));
+      return result.modifiedCount || 0;
     },
 
     async deleteById(id) {

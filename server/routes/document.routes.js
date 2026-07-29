@@ -135,7 +135,8 @@ router.post(
   "/:id/links",
   [
     documentId,
-    body("permission").optional().isIn(["view", "edit"]),
+    // Read-only by design — there is no anonymous write path.
+    body("permission").optional().isIn(["view"]).withMessage("Public links are read-only"),
     body("password").optional({ values: "falsy" }).isString().isLength({ min: 4, max: 200 }),
     body("expiresInDays").optional({ values: "falsy" }).isInt({ min: 1, max: 365 }),
     body("maxDownloads").optional({ values: "falsy" }).isInt({ min: 1, max: 100000 }),

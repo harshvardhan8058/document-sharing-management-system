@@ -49,7 +49,6 @@ export default function ShareDialog({ open, onClose, document: doc, onChanged })
   const [suggestions, setSuggestions] = useState([]);
 
   // link form
-  const [linkPermission, setLinkPermission] = useState("view");
   const [linkPassword, setLinkPassword] = useState("");
   const [linkExpiry, setLinkExpiry] = useState("30");
   const [maxDownloads, setMaxDownloads] = useState("");
@@ -135,7 +134,7 @@ export default function ShareDialog({ open, onClose, document: doc, onChanged })
     setCreatingLink(true);
     try {
       const { share } = await api.shares.createLink(doc.id, {
-        permission: linkPermission,
+        permission: "view",
         ...(linkPassword ? { password: linkPassword } : {}),
         ...(linkExpiry ? { expiresInDays: Number(linkExpiry) } : {}),
         ...(maxDownloads ? { maxDownloads: Number(maxDownloads) } : {}),
@@ -287,17 +286,16 @@ export default function ShareDialog({ open, onClose, document: doc, onChanged })
       ) : (
         <>
           <Alert tone="info">
-            Anyone holding a public link can open this document without signing in. Add a password or an
-            expiry to keep control.
+            Anyone holding a public link can view and download this document without signing in. Links are
+            read-only — add a password, an expiry or a download cap to keep control.
           </Alert>
 
           <div className="row gap-3 wrap">
             <div className="grow" style={{ minWidth: 140 }}>
-              <Field label="Permission">
-                <Select value={linkPermission} onChange={(event) => setLinkPermission(event.target.value)}>
-                  <option value="view">Can view</option>
-                  <option value="edit">Can edit</option>
-                </Select>
+              {/* Links are read-only by design — the API has no anonymous write
+                  path, so offering "Can edit" here would be a false promise. */}
+              <Field label="Permission" hint="Links are read-only">
+                <Input value="Can view" readOnly disabled icon="eye" />
               </Field>
             </div>
             <div className="grow" style={{ minWidth: 140 }}>

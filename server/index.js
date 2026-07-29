@@ -4,6 +4,7 @@ const config = require("./config/env");
 const logger = require("./utils/logger");
 const { connect, disconnect, flushSync } = require("./data");
 const storage = require("./services/storage.service");
+const maintenance = require("./services/maintenance.service");
 const createApp = require("./app");
 const { formatBytes } = require("./utils/files");
 
@@ -16,6 +17,9 @@ const { formatBytes } = require("./utils/files");
 async function main() {
   await connect();
   await storage.ensureDir();
+
+  // Retention sweeps run once now and then on a timer.
+  const stopMaintenance = maintenance.schedule();
 
   const app = createApp();
 
@@ -42,7 +46,7 @@ async function main() {
     logger.warn("JWT_SECRET is not set — a random secret was generated, so tokens will not survive a restart.");
   }
 
-  installShutdownHandlers(server);
+  installShutdownHandlers(server, stopMaintenance);
   return server;
 }
 
@@ -50,13 +54,14 @@ async function main() {
  * Close the port first (stop accepting work), then release the database, so
  * in-flight requests can finish. Falls back to a hard exit if something hangs.
  */
-function installShutdownHandlers(server) {
+function installShutdownHandlers(server, stopMaintenance = () => {}) {
   let shuttingDown = false;
 
   const shutdown = async (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info(`${signal} received — shutting down`);
+    stopMaintenance();
 
     const force = setTimeout(() => {
       logger.error("Graceful shutdown timed out — forcing exit");

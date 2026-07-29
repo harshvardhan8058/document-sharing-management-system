@@ -5,24 +5,9 @@ import { Icon } from "../lib/icons";
 import { api } from "../lib/api";
 import { useToast } from "../context/ToastContext";
 import { formatBytes, visibilityHint } from "../lib/format";
+import { categoryOf, extensionOf } from "../lib/fileTypes";
 
 const MAX_TAGS = 12;
-
-/** Extension -> category, mirroring the server so the icon is right before upload. */
-const CATEGORY_BY_EXT = {
-  pdf: "pdf",
-  doc: "document", docx: "document", odt: "document", rtf: "document", txt: "document", md: "document",
-  xls: "spreadsheet", xlsx: "spreadsheet", csv: "spreadsheet",
-  ppt: "presentation", pptx: "presentation",
-  png: "image", jpg: "image", jpeg: "image", gif: "image", webp: "image", svg: "image", bmp: "image",
-  zip: "archive", tar: "archive", gz: "archive",
-  mp3: "audio", wav: "audio",
-  mp4: "video", webm: "video",
-  json: "code", xml: "code",
-};
-
-const extensionOf = (name = "") => (name.includes(".") ? name.split(".").pop().toLowerCase() : "");
-const categoryOf = (name) => CATEGORY_BY_EXT[extensionOf(name)] || "other";
 
 /**
  * Upload dialog.
@@ -205,6 +190,10 @@ export default function UploadDialog({ open, onClose, onUploaded, limits, initia
         onDragLeave={() => setDragging(false)}
         onDrop={(event) => {
           event.preventDefault();
+          // The window-level drop listener that opens this dialog also sees the
+          // event as it bubbles, so without this the same files are handed in
+          // twice. Deduplication hid it; stopping propagation fixes it.
+          event.stopPropagation();
           setDragging(false);
           addFiles(Array.from(event.dataTransfer.files || []));
         }}

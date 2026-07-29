@@ -18,7 +18,10 @@ function createLocalRepository(collection) {
     find: async (filter, options) => toPublicList(await collection.find(filter, options)),
     count: (filter) => collection.count(filter),
     updateById: async (id, patch) => toPublic(await collection.updateById(id, patch)),
-    increment: async (id, increments) => toPublic(await collection.increment(id, increments)),
+    updateMany: (filter, patch) => collection.updateMany(filter, patch),
+    increment: async (id, increments, set) => toPublic(await collection.increment(id, increments, set)),
+    findOneAndIncrement: async (filter, increments, set) =>
+      toPublic(await collection.findOneAndIncrement(filter, increments, set)),
     deleteById: (id) => collection.deleteById(id),
     deleteMany: (filter) => collection.deleteMany(filter),
     distinct: (field, filter) => collection.distinct(field, filter),

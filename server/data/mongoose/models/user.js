@@ -23,6 +23,12 @@ const userSchema = new mongoose.Schema(
     storageQuotaBytes: { type: Number },
     lastLoginAt: { type: String, default: null },
     isActive: { type: Boolean, default: true },
+    /**
+     * Incremented to invalidate every token already issued to this account.
+     * Set explicitly by the auth service — see storageQuotaBytes above for why
+     * schema defaults are avoided for cross-driver fields.
+     */
+    tokenVersion: { type: Number },
     createdAt: { type: String },
     updatedAt: { type: String },
   },

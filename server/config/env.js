@@ -45,6 +45,32 @@ const nodeEnv = str("NODE_ENV", "development");
 const isProduction = nodeEnv === "production";
 const isTest = nodeEnv === "test";
 
+/**
+ * Parse TRUST_PROXY into a value Express understands.
+ *
+ * This defaults to `false`, and that default matters: with `trust proxy` on,
+ * Express believes whatever `X-Forwarded-For` a client sends, and the rate
+ * limiter buckets by that header. A directly-exposed server with proxy trust
+ * enabled therefore lets anyone mint a fresh login-attempt budget per request.
+ * Only enable it when something really is in front of you.
+ *
+ * Accepted: false | true | <hop count> | comma-separated IPs/CIDRs/presets.
+ */
+function parseTrustProxy() {
+  const raw = str("TRUST_PROXY", "false").toLowerCase();
+
+  if (raw === "false" || raw === "0" || raw === "off" || raw === "no") return false;
+  if (raw === "true" || raw === "on" || raw === "yes") return true;
+
+  const hops = Number.parseInt(raw, 10);
+  if (String(hops) === raw && hops >= 0) return hops;
+
+  const list = raw.split(",").map((value) => value.trim()).filter(Boolean);
+  return list.length > 1 ? list : list[0] || false;
+}
+
+const trustProxy = parseTrustProxy();
+
 // ---------------------------------------------------------------------------
 // Database driver selection
 // ---------------------------------------------------------------------------
@@ -136,6 +162,22 @@ const config = Object.freeze({
     windowMs: int("RATE_LIMIT_WINDOW_MINUTES", 15) * 60 * 1000,
     max: int("RATE_LIMIT_MAX", 600),
     authMax: int("AUTH_RATE_LIMIT_MAX", 40),
+  }),
+
+  security: Object.freeze({
+    trustProxy,
+    /** True when the setting blindly trusts any X-Forwarded-For header. */
+    trustsAnyProxy: trustProxy === true,
+  }),
+
+  /**
+   * Data retention. `0` disables a sweep entirely.
+   * Without these, the audit trail and the trash both grow without bound.
+   */
+  retention: Object.freeze({
+    activityDays: int("ACTIVITY_RETENTION_DAYS", 365),
+    trashDays: int("TRASH_RETENTION_DAYS", 30),
+    sweepIntervalHours: int("MAINTENANCE_INTERVAL_HOURS", 6),
   }),
 
   seed: Object.freeze({

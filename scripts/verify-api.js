@@ -24,6 +24,27 @@ process.env.JWT_SECRET = "verification-only-secret-do-not-use-in-production";
 process.env.MAX_UPLOAD_MB = "2";
 process.env.RATE_LIMIT_MAX = "100000";
 process.env.AUTH_RATE_LIMIT_MAX = "100000";
+// Retention sweeps are exercised explicitly; a timer firing mid-run would make
+// results depend on how long the suite took.
+process.env.MAINTENANCE_INTERVAL_HOURS = "0";
+process.env.ACTIVITY_RETENTION_DAYS = "0";
+process.env.TRASH_RETENTION_DAYS = "0";
+
+/**
+ * Against MongoDB, redirect to a throwaway database that is dropped afterwards.
+ * Without this, pointing the suite at a real cluster would write test accounts
+ * into whatever database the connection string names.
+ *
+ *   DB_DRIVER=mongo MONGODB_URI=mongodb://127.0.0.1:27017 npm run verify
+ */
+const MONGO_SCRATCH_DB = `dsms_verify_${process.pid}`;
+
+if (process.env.DB_DRIVER === "mongo") {
+  const uri = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017";
+  const parsed = new URL(uri);
+  parsed.pathname = `/${MONGO_SCRATCH_DB}`;
+  process.env.MONGODB_URI = parsed.toString();
+}
 
 const fs = require("fs");
 const fsp = require("fs/promises");
@@ -847,26 +868,548 @@ async function run() {
   // -------------------------------------------------------------------------
   group("Persistence");
 
-  await check("data is flushed to disk and reloads intact", async () => {
+  /**
+   * Same intent on both drivers — credentials are stored as scrypt hashes and
+   * never in the clear — but read back through whichever medium is in use, so
+   * this is a real durability check rather than one that skips on mongo.
+   */
+  await check("credentials are persisted as scrypt hashes, never in the clear", async () => {
     await drain();
-    const file = path.join(ROOT, ".verify", "data", "users.json");
-    const parsed = JSON.parse(await fsp.readFile(file, "utf8"));
-    assert.strictEqual(parsed.collection, "users");
-    assert.strictEqual(parsed.records.length, 2);
+
+    let records;
+    if (process.env.DB_DRIVER === "mongo") {
+      const mongoose = require("mongoose");
+      // Read through the raw collection, bypassing our own serialisation.
+      records = await mongoose.connection.db.collection("users").find({}).toArray();
+    } else {
+      const file = path.join(ROOT, ".verify", "data", "users.json");
+      const parsed = JSON.parse(await fsp.readFile(file, "utf8"));
+      assert.strictEqual(parsed.collection, "users");
+      records = parsed.records;
+    }
+
+    assert.ok(records.length >= 2, `expected at least 2 stored users, found ${records.length}`);
     assert.ok(
-      parsed.records.every((r) => typeof r.passwordHash === "string" && r.passwordHash.startsWith("scrypt$")),
+      records.every((r) => typeof r.passwordHash === "string" && r.passwordHash.startsWith("scrypt$")),
       "passwords must be stored as scrypt hashes"
     );
     assert.ok(
-      parsed.records.every((r) => !("password" in r)),
-      "plaintext password must never be stored"
+      records.every((r) => !("password" in r)),
+      "a plaintext password must never be stored"
     );
+    assert.ok(
+      records.every((r) => typeof r._id === "string" && /^[0-9a-f]{24}$/.test(r._id)),
+      "ids must be stored in the same 24-hex form on both drivers"
+    );
+  });
+
+  await check("a record written by this driver reloads with identical values", async () => {
+    const { db } = require("../server/data");
+
+    const written = await db.documents.create({
+      title: "Round trip",
+      description: "",
+      tags: ["alpha", "beta"],
+      ownerId: state.owner.id,
+      ownerName: "Verity Okonkwo",
+      visibility: "private",
+      storedName: "round-trip.bin",
+      originalName: "round-trip.bin",
+      mimeType: "application/octet-stream",
+      extension: "bin",
+      size: 12,
+      checksum: "abc",
+      category: "other",
+      version: 1,
+      versions: [{ version: 1, storedName: "round-trip.bin", originalName: "round-trip.bin", mimeType: "application/octet-stream", size: 12, checksum: "abc", uploadedAt: new Date().toISOString(), uploadedBy: state.owner.id, note: "" }],
+      downloadCount: 0,
+      viewCount: 0,
+      starredBy: [],
+      status: "active",
+      trashedAt: null,
+    });
+
+    await drain();
+    const reloaded = await db.documents.findById(written.id);
+
+    assert.deepStrictEqual(reloaded.tags, ["alpha", "beta"], "arrays must survive a round trip");
+    assert.strictEqual(reloaded.versions.length, 1, "nested version records must survive");
+    assert.strictEqual(reloaded.versions[0].size, 12);
+    assert.strictEqual(reloaded.trashedAt, null, "explicit nulls must not become undefined");
+    assert.strictEqual(typeof reloaded.createdAt, "string", "timestamps are ISO strings on both drivers");
+
+    await db.documents.deleteById(written.id);
   });
 
   await check("the SPA fallback responds on a non-API route", async () => {
     const res = await call("GET", "/documents", { raw: true });
     // 200 once the client is built, 503 with build instructions before then.
     assert.ok([200, 503].includes(res.status), `unexpected status ${res.status}`);
+  });
+
+  await runRegressions();
+}
+
+// ---------------------------------------------------------------------------
+// Regressions
+//
+// One check per bug found by auditing the first version. Each of these failed
+// before the corresponding fix; they exist so it cannot come back.
+// ---------------------------------------------------------------------------
+
+async function runRegressions() {
+  const { db } = require("../server/data");
+
+  group("Regression: starred documents respect revoked access");
+
+  const owner = { token: state.ownerToken };
+  let internalId;
+
+  await check("a document made 'internal' is visible to another member", async () => {
+    const form = uploadForm({
+      filename: "internal-notes.txt",
+      content: "team readable",
+      title: "Internal Notes",
+      visibility: "internal",
+    });
+    const created = await call("POST", "/api/documents", { token: owner.token, body: form });
+    expectStatus(created, 201);
+    internalId = created.body.document.id;
+
+    expectStatus(await call("GET", `/api/documents/${internalId}`, { token: state.collabToken }), 200);
+  });
+
+  await check("the other member stars it", async () => {
+    const res = await call("PUT", `/api/documents/${internalId}/star`, { token: state.collabToken });
+    expectStatus(res, 200);
+    assert.strictEqual(res.body.document.isStarred, true);
+  });
+
+  await check("once it is made private, it vanishes from their starred list", async () => {
+    expectStatus(
+      await call("PATCH", `/api/documents/${internalId}`, {
+        token: owner.token,
+        body: { visibility: "private" },
+      }),
+      200
+    );
+
+    const starred = await call("GET", "/api/documents?scope=starred", { token: state.collabToken });
+    expectStatus(starred, 200);
+    assert.strictEqual(
+      starred.body.meta.total,
+      0,
+      "a stale star must not keep leaking the title, filename, owner and size"
+    );
+  });
+
+  await check("and the detail and download routes still refuse them", async () => {
+    expectStatus(await call("GET", `/api/documents/${internalId}`, { token: state.collabToken }), 404);
+    expectStatus(await call("GET", `/api/documents/${internalId}/download`, { token: state.collabToken }), 404);
+  });
+
+  await check("the owner's own starred list is unaffected", async () => {
+    expectStatus(await call("PUT", `/api/documents/${internalId}/star`, { token: owner.token }), 200);
+    const mine = await call("GET", "/api/documents?scope=starred", { token: owner.token });
+    assert.strictEqual(mine.body.meta.total, 1);
+  });
+
+  group("Regression: a download cap cannot be exceeded");
+
+  let capToken;
+
+  await check("a link capped at 5 serves exactly 5 of 25 parallel downloads", async () => {
+    const created = await call("POST", `/api/documents/${internalId}/links`, {
+      token: owner.token,
+      body: { permission: "view", maxDownloads: 5 },
+    });
+    expectStatus(created, 201);
+    capToken = created.body.share.token;
+
+    const attempts = await Promise.all(
+      Array.from({ length: 25 }, () => call("GET", `/api/share/${capToken}/download`, { raw: true }))
+    );
+
+    const served = attempts.filter((res) => res.status === 200).length;
+    assert.strictEqual(served, 5, `expected exactly 5 successful downloads, got ${served}`);
+  });
+
+  await check("the recorded counter matches what was served, with no lost updates", async () => {
+    await drain();
+    const shares = await db.shares.find({ token: capToken });
+    assert.strictEqual(shares[0].downloadCount, 5, "a read-modify-write would under-count here");
+  });
+
+  await check("further attempts report the link as exhausted", async () => {
+    const res = await call("GET", `/api/share/${capToken}`);
+    expectStatus(res, 403);
+    expectCode(res, "LINK_EXHAUSTED");
+  });
+
+  await check("previewing a link does not spend its allowance", async () => {
+    const created = await call("POST", `/api/documents/${internalId}/links`, {
+      token: owner.token,
+      body: { maxDownloads: 2 },
+    });
+    const token = created.body.share.token;
+
+    await call("GET", `/api/share/${token}/preview`, { raw: true });
+    await call("GET", `/api/share/${token}/preview`, { raw: true });
+    await drain();
+
+    const [share] = await db.shares.find({ token });
+    assert.strictEqual(share.downloadCount, 0, "only a download should consume the cap");
+  });
+
+  group("Regression: the storage quota is enforced");
+
+  await check("an upload beyond the quota is refused with 413", async () => {
+    await db.users.updateById(state.owner.id, { storageQuotaBytes: 4096 });
+
+    const res = await call("POST", "/api/documents", {
+      token: owner.token,
+      body: uploadForm({ filename: "too-much.txt", content: "z".repeat(8192), title: "Too much" }),
+    });
+    expectStatus(res, 413);
+    expectCode(res, "STORAGE_QUOTA_EXCEEDED");
+    assert.ok(res.body.error.details[0].quotaBytes === 4096);
+  });
+
+  await check("the quota counts version history, not just current files", async () => {
+    await db.users.updateById(state.owner.id, { storageQuotaBytes: 100 * 1024 * 1024 });
+
+    const before = await call("GET", "/api/stats/overview", { token: owner.token });
+    const baseline = before.body.storage.usedBytes;
+
+    const res = await call("POST", `/api/documents/${internalId}/versions`, {
+      token: owner.token,
+      body: uploadForm({ filename: "internal-notes.txt", content: "y".repeat(4096) }),
+    });
+    expectStatus(res, 201);
+
+    const after = await call("GET", "/api/stats/overview", { token: owner.token });
+    assert.ok(
+      after.body.storage.usedBytes >= baseline + 4096,
+      "the superseded version still occupies disk and must still be charged"
+    );
+  });
+
+  await check("trashed documents keep counting until they are purged", async () => {
+    const created = await call("POST", "/api/documents", {
+      token: owner.token,
+      body: uploadForm({ filename: "doomed.txt", content: "w".repeat(2048), title: "Doomed" }),
+    });
+    expectStatus(created, 201);
+
+    const before = (await call("GET", "/api/stats/overview", { token: owner.token })).body.storage.usedBytes;
+    expectStatus(await call("POST", `/api/documents/${created.body.document.id}/trash`, { token: owner.token }), 200);
+
+    const after = (await call("GET", "/api/stats/overview", { token: owner.token })).body.storage.usedBytes;
+    assert.strictEqual(after, before, "trashing must not pretend the bytes are gone");
+
+    expectStatus(await call("DELETE", "/api/documents/trash/empty", { token: owner.token }), 200);
+    const emptied = (await call("GET", "/api/stats/overview", { token: owner.token })).body.storage.usedBytes;
+    assert.ok(emptied < before, "emptying the trash should free the space");
+  });
+
+  group("Regression: uploads are checked by content, not by name");
+
+  await check("a Windows executable named .pdf is refused", async () => {
+    const res = await call("POST", "/api/documents", {
+      token: owner.token,
+      body: uploadForm({
+        filename: "invoice.pdf",
+        content: Buffer.from([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00]),
+        title: "Disguised",
+      }),
+    });
+    expectStatus(res, 415);
+    expectCode(res, "EXECUTABLE_REJECTED");
+  });
+
+  await check("an ELF binary named .txt is refused", async () => {
+    const res = await call("POST", "/api/documents", {
+      token: owner.token,
+      body: uploadForm({
+        filename: "readme.txt",
+        content: Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01]),
+        title: "Disguised elf",
+      }),
+    });
+    expectStatus(res, 415);
+    expectCode(res, "EXECUTABLE_REJECTED");
+  });
+
+  await check("plain text named .pdf is refused as a mismatch", async () => {
+    const res = await call("POST", "/api/documents", {
+      token: owner.token,
+      body: uploadForm({ filename: "fake.pdf", content: "not a pdf at all", title: "Fake" }),
+    });
+    expectStatus(res, 415);
+    expectCode(res, "CONTENT_MISMATCH");
+  });
+
+  await check("a genuine PDF and a plain .md are both accepted", async () => {
+    expectStatus(
+      await call("POST", "/api/documents", {
+        token: owner.token,
+        body: uploadForm({ filename: "real.pdf", content: "%PDF-1.7\n1 0 obj\n", title: "Real PDF" }),
+      }),
+      201
+    );
+    expectStatus(
+      await call("POST", "/api/documents", {
+        token: owner.token,
+        body: uploadForm({ filename: "notes.md", content: "# Heading\n", title: "Notes" }),
+      }),
+      201
+    );
+  });
+
+  await check("rejected uploads leave nothing behind on disk", async () => {
+    const before = await storage.usageOnDisk();
+    await call("POST", "/api/documents", {
+      token: owner.token,
+      body: uploadForm({ filename: "x.pdf", content: Buffer.from([0x4d, 0x5a]), title: "nope" }),
+    });
+    const after = await storage.usageOnDisk();
+    assert.strictEqual(after.files, before.files);
+  });
+
+  group("Regression: tokens can be revoked");
+
+  await check("signing out everywhere invalidates the token that did it", async () => {
+    const throwaway = await call("POST", "/api/auth/register", {
+      body: {
+        firstName: "Temp",
+        lastName: "Session",
+        email: `revoke-${stamp}@example.com`,
+        password: "Revocation9Test",
+      },
+    });
+    expectStatus(throwaway, 201);
+    const token = throwaway.body.token;
+
+    expectStatus(await call("GET", "/api/auth/me", { token }), 200);
+    expectStatus(await call("POST", "/api/auth/logout-all", { token }), 200);
+
+    const after = await call("GET", "/api/auth/me", { token });
+    expectStatus(after, 401);
+    expectCode(after, "TOKEN_REVOKED");
+  });
+
+  await check("changing a password kills other sessions but keeps the caller signed in", async () => {
+    const email = `rotate-${stamp}@example.com`;
+    const created = await call("POST", "/api/auth/register", {
+      body: { firstName: "Rot", lastName: "Ate", email, password: "FirstPass9word" },
+    });
+    expectStatus(created, 201);
+
+    const otherDevice = (await call("POST", "/api/auth/login", { body: { email, password: "FirstPass9word" } }))
+      .body.token;
+
+    const changed = await call("POST", "/api/auth/change-password", {
+      token: created.body.token,
+      body: { currentPassword: "FirstPass9word", newPassword: "SecondPass9word" },
+    });
+    expectStatus(changed, 200);
+    assert.ok(changed.body.token, "a replacement token must be issued");
+
+    expectStatus(await call("GET", "/api/auth/me", { token: otherDevice }), 401);
+    expectStatus(await call("GET", "/api/auth/me", { token: changed.body.token }), 200);
+  });
+
+  group("Regression: public links are read-only");
+
+  await check("requesting an editable link is rejected rather than silently downgraded", async () => {
+    const res = await call("POST", `/api/documents/${internalId}/links`, {
+      token: owner.token,
+      body: { permission: "edit" },
+    });
+    expectStatus(res, 422);
+  });
+
+  group("Administration");
+
+  await check("an admin can list accounts with their real storage footprint", async () => {
+    const res = await call("GET", "/api/admin/users", { token: owner.token });
+    expectStatus(res, 200);
+    assert.ok(res.body.users.length >= 2);
+
+    const me = res.body.users.find((user) => user.id === state.owner.id);
+    assert.ok(me, "the caller should appear in the listing");
+    assert.strictEqual(typeof me.usedBytes, "number");
+    assert.strictEqual(me.passwordHash, undefined, "hashes must never be listed");
+    assert.strictEqual(me.tokenVersion, undefined, "internal bookkeeping must not leak");
+  });
+
+  await check("a member is forbidden from the admin routes", async () => {
+    const res = await call("GET", "/api/admin/users", { token: state.collabToken });
+    expectStatus(res, 403);
+    expectCode(res, "INSUFFICIENT_ROLE");
+  });
+
+  await check("the only active admin cannot demote themselves", async () => {
+    const res = await call("PATCH", `/api/admin/users/${state.owner.id}`, {
+      token: owner.token,
+      body: { role: "member" },
+    });
+    expectStatus(res, 400);
+    expectCode(res, "LAST_ADMIN");
+  });
+
+  await check("an admin cannot deactivate their own account", async () => {
+    const res = await call("PATCH", `/api/admin/users/${state.owner.id}`, {
+      token: owner.token,
+      body: { isActive: false },
+    });
+    expectStatus(res, 400);
+    expectCode(res, "SELF_DEACTIVATE");
+  });
+
+  await check("deactivating a member signs them out immediately", async () => {
+    expectStatus(
+      await call("PATCH", `/api/admin/users/${state.collab.id}`, {
+        token: owner.token,
+        body: { isActive: false },
+      }),
+      200
+    );
+
+    const res = await call("GET", "/api/auth/me", { token: state.collabToken });
+    expectStatus(res, 403);
+    expectCode(res, "ACCOUNT_DISABLED");
+
+    // Restore, so later assertions are not affected.
+    expectStatus(
+      await call("PATCH", `/api/admin/users/${state.collab.id}`, {
+        token: owner.token,
+        body: { isActive: true },
+      }),
+      200
+    );
+  });
+
+  await check("quotas can be changed and take effect immediately", async () => {
+    expectStatus(
+      await call("PATCH", `/api/admin/users/${state.collab.id}`, {
+        token: owner.token,
+        body: { storageQuotaGb: 0.000001 }, // ~1 KB
+      }),
+      200
+    );
+
+    const collabToken = (await call("POST", "/api/auth/login", {
+      body: { email: collaborator.email, password: collaborator.password },
+    })).body.token;
+
+    const res = await call("POST", "/api/documents", {
+      token: collabToken,
+      body: uploadForm({ filename: "over.txt", content: "q".repeat(4096), title: "Over" }),
+    });
+    expectStatus(res, 413);
+    expectCode(res, "STORAGE_QUOTA_EXCEEDED");
+  });
+
+  group("Storage reconciliation & retention");
+
+  await check("a healthy instance reports no orphaned or missing files", async () => {
+    const res = await call("GET", "/api/admin/storage", { token: owner.token });
+    expectStatus(res, 200);
+    assert.strictEqual(res.body.orphanedFiles, 0, `orphans: ${JSON.stringify(res.body.sample.orphaned)}`);
+    assert.strictEqual(res.body.missingFiles, 0, `missing: ${JSON.stringify(res.body.sample.missing)}`);
+    assert.ok(res.body.referencedFiles > 0);
+  });
+
+  await check("version history is not mistaken for an orphan", async () => {
+    // The old heuristic (files on disk minus document count) counted every
+    // superseded version as unreferenced.
+    const res = await call("GET", "/api/admin/storage", { token: owner.token });
+    assert.ok(
+      res.body.referencedFiles >= res.body.filesOnDisk,
+      `referenced ${res.body.referencedFiles} should cover all ${res.body.filesOnDisk} files on disk`
+    );
+    assert.strictEqual(res.body.orphanedFiles, 0);
+  });
+
+  await check("a genuinely stray file is detected and can be purged", async () => {
+    await fsp.writeFile(path.join(ROOT, ".verify", "uploads", "stray.txt"), "left behind", "utf8");
+
+    const detected = await call("GET", "/api/admin/storage", { token: owner.token });
+    assert.strictEqual(detected.body.orphanedFiles, 1);
+
+    const purged = await call("POST", "/api/admin/storage/purge-orphans", { token: owner.token });
+    expectStatus(purged, 200);
+    assert.strictEqual(purged.body.removed, 1);
+
+    const clean = await call("GET", "/api/admin/storage", { token: owner.token });
+    assert.strictEqual(clean.body.orphanedFiles, 0);
+  });
+
+  await check("a record whose file has vanished is reported as missing", async () => {
+    const created = await call("POST", "/api/documents", {
+      token: owner.token,
+      body: uploadForm({ filename: "vanishing.txt", content: "here for now", title: "Vanishing" }),
+    });
+    expectStatus(created, 201);
+
+    const [record] = await db.documents.find({ id: created.body.document.id });
+    await fsp.unlink(storage.pathFor(record.storedName));
+
+    const res = await call("GET", "/api/admin/storage", { token: owner.token });
+    assert.strictEqual(res.body.missingFiles, 1);
+
+    // A download of the missing file must fail cleanly, not 500.
+    const download = await call("GET", `/api/documents/${created.body.document.id}/download`, {
+      token: owner.token,
+    });
+    expectStatus(download, 404);
+    expectCode(download, "FILE_MISSING");
+
+    await call("DELETE", `/api/documents/${created.body.document.id}?permanent=true`, { token: owner.token });
+  });
+
+  await check("the retention sweep purges trash past its window", async () => {
+    const created = await call("POST", "/api/documents", {
+      token: owner.token,
+      body: uploadForm({ filename: "stale.txt", content: "old news", title: "Stale" }),
+    });
+    const id = created.body.document.id;
+    expectStatus(await call("POST", `/api/documents/${id}/trash`, { token: owner.token }), 200);
+
+    // Backdate it past any plausible window.
+    await db.documents.updateById(id, {
+      trashedAt: new Date(Date.now() - 400 * 86_400_000).toISOString(),
+    });
+
+    const maintenance = require("../server/services/maintenance.service");
+    const result = await maintenance.purgeTrash(30);
+
+    assert.strictEqual(result.documents, 1, "the stale trashed document should be purged");
+    expectStatus(await call("GET", `/api/documents/${id}`, { token: owner.token }), 404);
+  });
+
+  await check("the retention sweep prunes old audit entries", async () => {
+    const maintenance = require("../server/services/maintenance.service");
+
+    const created = await db.activities.create({
+      action: "document.viewed",
+      actorId: state.owner.id,
+      createdAt: new Date(Date.now() - 400 * 86_400_000).toISOString(),
+    });
+
+    const result = await maintenance.pruneActivity(30);
+    assert.ok(result.removed >= 1);
+    assert.strictEqual(await db.activities.findById(created.id), null);
+  });
+
+  await check("retention of 0 disables a sweep instead of deleting everything", async () => {
+    const maintenance = require("../server/services/maintenance.service");
+    const before = await db.activities.count({});
+
+    assert.strictEqual((await maintenance.pruneActivity(0)).skipped, true);
+    assert.strictEqual((await maintenance.purgeTrash(0)).skipped, true);
+    assert.strictEqual(await db.activities.count({}), before, "nothing should have been removed");
   });
 }
 
@@ -895,6 +1438,7 @@ async function run() {
   const seconds = ((Date.now() - startedAt) / 1000).toFixed(2);
 
   console.log(`\n${"─".repeat(64)}`);
+  console.log(`${c.bold("Driver")}  ${c.cyan(process.env.DB_DRIVER)}`);
   console.log(
     `${c.bold("Result")}  ${c.green(`${results.length - failed.length} passed`)}` +
       (failed.length ? `  ${c.red(`${failed.length} failed`)}` : "") +
@@ -911,6 +1455,19 @@ async function run() {
 
   await new Promise((resolve) => server.close(resolve));
   await drain();
+
+  // Drop the scratch database before disconnecting, so a mongo run leaves the
+  // cluster exactly as it was found.
+  if (process.env.DB_DRIVER === "mongo") {
+    try {
+      const mongoose = require("mongoose");
+      await mongoose.connection.dropDatabase();
+      console.log(c.dim(`Dropped scratch database ${MONGO_SCRATCH_DB}`));
+    } catch (err) {
+      console.log(c.red(`Could not drop ${MONGO_SCRATCH_DB}: ${err.message}`));
+    }
+  }
+
   await disconnect();
   fs.rmSync(SANDBOX, { recursive: true, force: true });
 

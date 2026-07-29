@@ -9,6 +9,7 @@ const compression = require("compression");
 const rateLimit = require("express-rate-limit");
 
 const config = require("./config/env");
+const logger = require("./utils/logger");
 const apiRoutes = require("./routes");
 const requestLogger = require("./middleware/requestLogger");
 const { notFound, errorHandler } = require("./middleware/error");
@@ -64,9 +65,17 @@ function corsDelegate(req, callback) {
 function createApp() {
   const app = express();
 
-  // Required for correct req.ip / rate limiting behind a proxy or load balancer.
-  app.set("trust proxy", 1);
+  // Off by default. See config/env.js — trusting X-Forwarded-For on a directly
+  // exposed server lets a client forge its own IP and evade the rate limiter.
+  app.set("trust proxy", config.security.trustProxy);
   app.disable("x-powered-by");
+
+  if (config.security.trustsAnyProxy) {
+    logger.warn(
+      "TRUST_PROXY=true trusts any X-Forwarded-For header. Only correct when every " +
+        "request reaches this server through a proxy you control; prefer a hop count or an IP list."
+    );
+  }
 
   app.use(
     helmet({
@@ -108,6 +117,9 @@ function createApp() {
     max: config.rateLimit.max,
     standardHeaders: true,
     legacyHeaders: false,
+    // We warn about a permissive TRUST_PROXY ourselves at boot; the library's
+    // own check would otherwise refuse to start on a deliberately-set value.
+    validate: { trustProxy: false },
     // Downloads and previews of a large library can legitimately be chatty.
     skip: (req) => req.method === "GET" && /\/(download|preview)(\/|$)/.test(req.path),
     message: {

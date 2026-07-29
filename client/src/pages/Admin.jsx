@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Badge, Button, DescriptionList, Skeleton } from "../components/ui";
+import AdminUsers from "../components/AdminUsers";
 import { Icon } from "../lib/icons";
 import { api } from "../lib/api";
-import { formatBytes, formatNumber } from "../lib/format";
+import { useToast } from "../context/ToastContext";
+import { formatBytes, formatNumber, relativeTime } from "../lib/format";
 
 function StatTile({ label, value, meta, icon, tone }) {
   return (
@@ -19,7 +21,10 @@ function StatTile({ label, value, meta, icon, tone }) {
 
 /** Instance-wide health. Reachable only with the admin role (enforced server-side). */
 export default function Admin() {
+  const toast = useToast();
   const [state, setState] = useState({ status: "loading" });
+  const [purging, setPurging] = useState(false);
+  const [sweeping, setSweeping] = useState(false);
 
   useEffect(() => {
     document.title = "Instance health · DSMS";
@@ -38,6 +43,35 @@ export default function Admin() {
   useEffect(() => {
     load();
   }, [load]);
+
+  async function purgeOrphans() {
+    setPurging(true);
+    try {
+      const result = await api.admin.purgeOrphans();
+      toast.success(`Removed ${result.removed} unreferenced file(s)`, result.label);
+      await load();
+    } catch (error) {
+      toast.fromError(error, "Could not purge unreferenced files");
+    } finally {
+      setPurging(false);
+    }
+  }
+
+  async function runSweep() {
+    setSweeping(true);
+    try {
+      const result = await api.admin.runMaintenance();
+      toast.success(
+        "Maintenance complete",
+        `${result.activity?.removed ?? 0} audit entries pruned, ${result.trash?.documents ?? 0} trashed document(s) purged.`
+      );
+      await load();
+    } catch (error) {
+      toast.fromError(error, "Maintenance failed");
+    } finally {
+      setSweeping(false);
+    }
+  }
 
   if (state.status === "error") {
     return (
@@ -77,8 +111,9 @@ export default function Admin() {
   }
 
   const { health } = state;
-  const hasOrphans = health.orphanedFiles > 0;
-  const driftBytes = Math.abs(health.disk.bytes - health.trackedBytes);
+  const reconciliation = health.storageReconciliation;
+  const hasOrphans = reconciliation.orphanedFiles > 0;
+  const hasMissing = reconciliation.missingFiles > 0;
 
   return (
     <>
@@ -132,68 +167,121 @@ export default function Admin() {
           <div className="panel__header">
             <div>
               <div className="panel__title">Storage reconciliation</div>
-              <div className="panel__subtitle">Database records compared with the files on disk</div>
+              <div className="panel__subtitle">Filenames on disk compared with the records that reference them</div>
             </div>
+            {hasOrphans ? (
+              <Button variant="outline" size="sm" icon="trash" loading={purging} onClick={purgeOrphans}>
+                Purge {formatNumber(reconciliation.orphanedFiles)}
+              </Button>
+            ) : null}
           </div>
           <div className="panel__body col gap-4">
             <DescriptionList
               items={[
-                { key: "Tracked in database", value: health.trackedLabel },
-                { key: "Present on disk", value: `${health.disk.label} across ${formatNumber(health.disk.files)} files` },
-                {
-                  key: "Difference",
-                  value: (
-                    <span className={driftBytes > 1024 * 1024 ? "warning" : "success"}>
-                      {formatBytes(driftBytes)}
-                    </span>
-                  ),
-                },
+                { key: "Files referenced by records", value: formatNumber(reconciliation.referencedFiles) },
+                { key: "Files present on disk", value: formatNumber(reconciliation.filesOnDisk) },
+                { key: "Bytes on disk", value: health.disk.label },
                 {
                   key: "Unreferenced files",
                   value: (
                     <span className={hasOrphans ? "warning" : "success"}>
-                      {formatNumber(health.orphanedFiles)}
+                      {formatNumber(reconciliation.orphanedFiles)}
+                      {reconciliation.orphanedBytes ? ` (${reconciliation.orphanedLabel})` : ""}
+                    </span>
+                  ),
+                },
+                {
+                  key: "Records missing their file",
+                  value: (
+                    <span className={hasMissing ? "danger" : "success"}>
+                      {formatNumber(reconciliation.missingFiles)}
                     </span>
                   ),
                 },
               ]}
             />
 
+            {hasMissing ? (
+              <Alert tone="error" title="Some documents point at files that are gone">
+                Downloads for these will fail. Restore the upload directory from a backup, or delete the
+                affected records.
+                {reconciliation.sample?.missing?.length ? (
+                  <p className="mono text-xs mt-2 break-word">
+                    {reconciliation.sample.missing.join(", ")}
+                  </p>
+                ) : null}
+              </Alert>
+            ) : null}
+
             {hasOrphans ? (
-              <Alert tone="warning" title="Some stored files are not referenced by any document">
-                This usually means a cleanup was interrupted. Version history also counts here, so a value
-                close to the number of extra versions is expected rather than a problem.
+              <Alert tone="warning" title="Some stored files are not referenced by any record">
+                Usually an interrupted cleanup. Version history is counted as referenced, so these really
+                are unused and safe to purge.
               </Alert>
-            ) : (
+            ) : !hasMissing ? (
               <Alert tone="success" title="Disk and database agree">
-                Every stored file is referenced by a document record.
+                Every stored file is referenced, and every record has its file.
               </Alert>
-            )}
+            ) : null}
           </div>
         </section>
 
         <section className="panel panel--flush">
           <div className="panel__header">
             <div>
-              <div className="panel__title">Deployment</div>
+              <div className="panel__title">Retention &amp; deployment</div>
               <div className="panel__subtitle">Runtime configuration in effect</div>
             </div>
+            <Button variant="outline" size="sm" icon="refresh" loading={sweeping} onClick={runSweep}>
+              Run sweep
+            </Button>
           </div>
-          <div className="panel__body">
+          <div className="panel__body col gap-4">
             <DescriptionList
               items={[
                 { key: "Persistence driver", value: health.driver },
+                {
+                  key: "Audit retention",
+                  value: health.retention.activityDays
+                    ? `${formatNumber(health.retention.activityDays)} days`
+                    : "disabled — the trail grows without bound",
+                },
+                {
+                  key: "Trash retention",
+                  value: health.retention.trashDays
+                    ? `${formatNumber(health.retention.trashDays)} days`
+                    : "disabled — trashed files are kept forever",
+                },
+                {
+                  key: "Sweep interval",
+                  value: health.retention.sweepIntervalHours
+                    ? `every ${health.retention.sweepIntervalHours}h`
+                    : "manual only",
+                },
+                {
+                  key: "Last sweep",
+                  value: health.retention.lastRun
+                    ? `${relativeTime(health.retention.lastRun.at)} (${health.retention.lastRun.reason})`
+                    : "not run yet",
+                },
                 { key: "Total events logged", value: formatNumber(state.totalEvents) },
-                { key: "Documents per account", value: health.users ? (health.documents / health.users).toFixed(1) : "0" },
                 {
                   key: "Average document size",
                   value: health.documents ? formatBytes(health.trackedBytes / health.documents) : "—",
                 },
               ]}
             />
+
+            {health.retention.lastRun?.error ? (
+              <Alert tone="error" title="The last maintenance sweep failed">
+                {health.retention.lastRun.error}
+              </Alert>
+            ) : null}
           </div>
         </section>
       </div>
+
+      <AdminUsers />
     </>
   );
 }

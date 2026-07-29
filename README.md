@@ -22,12 +22,15 @@ On a fresh install with no seed, **the first account you register becomes the ad
 | Area | Behaviour |
 | --- | --- |
 | **Accounts** | Registration, sign-in, profile, password rotation. JWT bearer tokens, scrypt password hashing. |
-| **Documents** | Upload with size + extension limits, metadata, tags, three visibility levels. |
+| **Documents** | Upload with size, extension **and content** limits, metadata, tags, three visibility levels. |
 | **Versions** | Uploading a revision never overwrites history; any earlier version stays downloadable. |
 | **Sharing — people** | Grant `view` / `edit` / `manage` by email, with an optional expiry. Works before the recipient has an account. |
-| **Sharing — links** | Anonymous links with optional password, expiry date and hard download cap. Revocable. |
-| **Trash** | Soft delete, restore, or permanent delete that also erases every stored version from disk. |
-| **Audit trail** | Append-only log of uploads, downloads, edits, shares, revocations and sign-ins, with actor, timestamp and IP. |
+| **Sharing — links** | Read-only anonymous links with optional password, expiry date and hard download cap. Revocable. |
+| **Quotas** | A per-account allowance, enforced on upload, counting every stored version and anything sitting in the trash. |
+| **Trash** | Soft delete, restore, or permanent delete that also erases every stored version from disk. Auto-purged after a retention window. |
+| **Sessions** | Tokens can be revoked: "sign out everywhere", and changing a password ends every other session. |
+| **Audit trail** | Append-only log of uploads, downloads, edits, shares, revocations and sign-ins, with actor, timestamp and IP. Pruned on a retention window. |
+| **Administration** | Account list with real storage footprint, role and quota changes, deactivation, disk/database reconciliation. |
 | **Insights** | Dashboard metrics, storage gauge, type breakdown, upload timeline, per-instance health for admins. |
 
 ### The interface
@@ -77,10 +80,22 @@ Copy `.env.example` to `.env`. Every value has a working default.
 | `PASSWORD_COST` | `16384` | scrypt `N`. |
 | `UPLOAD_DIR` | `./uploads` | |
 | `MAX_UPLOAD_MB` | `25` | |
-| `STORAGE_QUOTA_GB` | `2` | Per-account allowance. |
+| `STORAGE_QUOTA_GB` | `2` | Per-account allowance. `0` disables the limit. |
 | `ALLOWED_EXTENSIONS` | see `.env.example` | Empty means "allow anything". |
+| `TRUST_PROXY` | `false` | **Leave off unless a proxy really is in front.** See below. |
 | `RATE_LIMIT_MAX` | `600` / 15 min | Downloads and previews are exempt. |
 | `AUTH_RATE_LIMIT_MAX` | `40` / 15 min | Credential endpoints only. |
+| `ACTIVITY_RETENTION_DAYS` | `365` | Audit entries older than this are deleted. `0` disables. |
+| `TRASH_RETENTION_DAYS` | `30` | Trashed documents are purged after this. `0` disables. |
+| `MAINTENANCE_INTERVAL_HOURS` | `6` | Retention sweep cadence. `0` = manual only. |
+
+### A note on `TRUST_PROXY`
+
+With proxy trust enabled, Express believes the `X-Forwarded-For` header — and the rate limiter
+buckets requests by it. On a directly exposed server that means a client can forge its own IP and
+mint a fresh login-attempt budget on every request, defeating the 40-attempt limit. So it defaults
+to `false`. Set it to `1` behind a single reverse proxy, to a comma-separated list of proxy
+addresses, or to `true` only if you accept that trade-off (the server warns at boot if you do).
 
 Generate a secret:
 
@@ -115,7 +130,10 @@ client/
   src/styles/         design tokens, base, layout, components, utilities
 scripts/
   seed.js             demo data
-  verify-api.js       end-to-end API verification
+  verify-api.js       end-to-end API verification (both drivers)
+tests/                node:test unit tests — no test framework dependency
+.github/workflows/
+  ci.yml              tests on Node 20/22, the API suite on both drivers, client build
 ```
 
 Authorization lives in exactly one place, `server/services/access.service.js`. Permission levels are
@@ -133,12 +151,29 @@ npm run dev          # API with --watch
 npm run client:dev   # Vite dev server on :5173, proxying /api to :4000
 npm run build        # install + build the client
 npm run seed         # demo accounts and documents (safe to re-run)
-npm run verify       # 77-check end-to-end API suite against a throwaway database
+npm test             # unit tests (node:test, no test framework dependency)
+npm run verify       # 111-check end-to-end API suite against a throwaway database
+npm run check        # both of the above
 ```
 
 `npm run verify` boots the real server in-process against an isolated database and upload
 directory, exercises every endpoint over HTTP — including the failure paths — and exits non-zero on
 the first failure.
+
+**Run the same suite against a real MongoDB.** The harness redirects to a throwaway database
+(`dsms_verify_<pid>`) and drops it afterwards, so this is safe to point at any cluster:
+
+```bash
+DB_DRIVER=mongo MONGODB_URI=mongodb://127.0.0.1:27017 npm run verify
+```
+
+Both driver paths are exercised in CI, and both currently pass 111/111.
+
+`npm test` covers the parts where a subtle mistake is expensive and invisible: the query dialect
+the two drivers share, scrypt hashing, magic-byte inspection, the compare-and-swap primitive behind
+download caps, the local store's lock and durability, and the open-redirect defence in the router.
+Two of those files exist specifically to catch drift between the client and server copies of the
+password policy and the file-type table.
 
 ---
 
@@ -155,8 +190,12 @@ Bearer token in `Authorization`. Errors are always `{ "error": { "code", "messag
 | `GET  /api/auth/me` | Current user. |
 | `PATCH /api/auth/me` | Update name / accent colour. |
 | `POST /api/auth/change-password` | Rotate password. |
+| `POST /api/auth/logout-all` | Invalidate every token for the account, this one included. |
 | `GET  /api/auth/directory?search=` | People picker for sharing. |
 | `GET  /api/auth/me/activity` | Your audit trail. |
+
+Changing a password ends every *other* session and returns a freshly signed token, so the browser
+you are sitting at stays signed in. A token rejected this way reports `TOKEN_REVOKED`.
 
 ### Documents
 | | |
@@ -194,6 +233,19 @@ Link failures carry distinct codes so a client can explain itself: `LINK_NOT_FOU
 | `GET /api/stats/activity` | Instance-wide audit feed *(admin)*. |
 | `GET /api/stats/system` | Instance health and storage reconciliation *(admin)*. |
 | `GET /api/health` | Liveness probe. |
+
+### Administration *(admin only)*
+| | |
+| --- | --- |
+| `GET  /api/admin/users` | Accounts with their real storage footprint. |
+| `PATCH /api/admin/users/:id` | `{ role, isActive, storageQuotaGb }`. Deactivating signs the user out everywhere. |
+| `GET  /api/admin/storage` | Compare files on disk against the records that reference them. |
+| `POST /api/admin/storage/purge-orphans` | Delete unreferenced files. |
+| `POST /api/admin/maintenance/run` | Run the retention sweeps now. |
+
+Two invariants are enforced here rather than left to the UI: you cannot deactivate your own
+account, and a change that would leave the instance with no active admin is refused
+(`LAST_ADMIN`). Stepping down is allowed as soon as a second active admin exists.
 
 ---
 
@@ -243,6 +295,35 @@ because none of them show up in a unit test:
 5. **Truncated labels overlapped.** `text-overflow: ellipsis` is a no-op on inline elements, which
    the sidebar user block and dashboard rows were.
 
+### Then a second audit found more
+
+A deliberate pass over the "finished" code turned up three genuine defects, each reproduced before
+being fixed and now pinned by a regression check:
+
+1. **`scope=starred` leaked documents whose access had been revoked.** Every other listing scope was
+   constrained to what the caller may see; this one filtered only on the bookmark. Starring an
+   `internal` document and then having the owner make it `private` left its title, filename, owner
+   and size visible indefinitely. The file itself was never exposed. Access rules now live in one
+   `accessibleClause()` that every scope intersects with.
+2. **A public link's download cap could be exceeded.** The counter was a read-modify-write, so
+   concurrent downloads overwrote each other (ten parallel requests recorded three), and the limit
+   check and the increment were separate steps, so several requests passed the check before any of
+   them incremented. Downloads are now claimed with a compare-and-swap *before* streaming. The
+   deliberate trade-off: an aborted transfer still spends its slot, so the cap fails closed.
+3. **The storage quota was decoration.** It appeared in the sidebar, the dashboard gauge and the
+   settings page, and nothing ever checked it. It is now enforced on upload and on new versions, and
+   the number shown is computed the same way the check is — including version history and trash.
+
+Alongside those: the `LAST_ADMIN` guard was unreachable dead code *and* wrongly blocked demoting an
+already-inactive admin; a public link would accept `permission: "edit"` and report it back despite
+no anonymous write path existing; the admin "unreferenced files" figure was a subtraction that
+counted every historical version as an orphan.
+
+Three more surfaced while writing the tests — a client password rule missing the server's
+200-character maximum, `sanitizeFilename` leaving Windows-style paths intact on Linux, and a focus
+trap that captured its container element once and so pointed at a detached node after the panel
+finished loading, silently swallowing every Tab press.
+
 ---
 
 ## Notes on a few decisions
@@ -262,3 +343,44 @@ never disagree about what is allowed.
 
 **The audit trail survives deletion.** Removing a document erases its files and its shares but keeps
 its log entries. An audit trail that can be erased by the person being audited is not an audit trail.
+
+**Uploads are judged by their bytes, not their name.** An extension allow-list only reads a string
+the client chose. `server/utils/signatures.js` reads the leading bytes: executables are refused under
+any name, and an extension that claims a specific binary format has to actually be that format.
+Formats with no reliable signature — plain text, CSV, JSON, SVG — are exempt, because guessing there
+would only reject valid files.
+
+**Defaults are chosen to fail safe.** `TRUST_PROXY` is off, retention sweeps are on, and the server
+refuses to start in production without an explicit `JWT_SECRET`. Configuration you have to remember
+to harden is configuration that ships unhardened.
+
+---
+
+## Known limitations
+
+Deliberate gaps, so nobody has to discover them the hard way.
+
+**Tokens live in `localStorage`.** That makes them readable by any successful XSS. The mitigations
+are a strict CSP with no inline scripts, and the revocation support above. Moving to an
+`httpOnly` cookie would be stronger, and would mean adding CSRF protection to every mutating
+route — a deliberate deferral, not an oversight.
+
+**Rate limiting is in-process memory.** It resets on restart and each replica keeps its own budget,
+so it slows down a single attacker rather than a distributed one. A shared store (Redis) is the
+real answer behind more than one instance.
+
+**No outbound email.** Sharing with an address that has no account works — access starts the moment
+they register, and pending grants are linked to the new account automatically — but nobody is
+*notified*. For the same reason there is no password-reset flow; an admin changing a quota or role
+is the only out-of-band recovery path.
+
+**The local driver is single-process.** It keeps every record in memory, scans linearly, and rewrites
+whole files. A pid lock makes a second process refuse to start rather than silently corrupt the
+data. It is meant for development, demos and CI — not production.
+
+**No component-level frontend tests.** The pure logic in `client/src/lib` is unit tested and the full
+interface has been driven end to end in a real headless browser, but there is no jsdom render suite,
+so a purely visual regression would not be caught automatically.
+
+**Virus scanning is out of scope.** Content inspection stops disguised executables; it is not a
+malware scanner. Anything handling untrusted uploads at scale wants a real scanner in front.

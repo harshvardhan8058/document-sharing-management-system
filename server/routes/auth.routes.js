@@ -22,6 +22,7 @@ const credentialLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
+  validate: { trustProxy: false },
   message: { error: { code: "RATE_LIMITED", message: "Too many attempts — try again later" } },
 });
 
@@ -96,6 +97,8 @@ router.get(
   validate,
   controller.directory
 );
+
+router.post("/logout-all", requireAuth, controller.revokeSessions);
 
 router.get("/me/activity", requireAuth, controller.myActivity);
 

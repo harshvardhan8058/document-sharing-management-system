@@ -198,18 +198,71 @@ class LocalCollection {
     return LocalCollection.clone(next);
   }
 
+  /** Apply the same patch to every matching document. Returns the count. */
+  async updateMany(filter = {}, patch = {}) {
+    const query = translateFilter(filter);
+    const stamp = new Date().toISOString();
+    let changed = 0;
+
+    for (const [id, doc] of [...this.docs.entries()]) {
+      if (!matches(doc, query)) continue;
+
+      const next = { ...doc };
+      for (const [key, value] of Object.entries(patch)) {
+        if (key === "_id" || key === "id") continue;
+        if (value === undefined) delete next[key];
+        else next[key] = LocalCollection.clone(value);
+      }
+      next.updatedAt = stamp;
+
+      this.assertUnique(next, id);
+      this.docs.set(id, next);
+      changed += 1;
+    }
+
+    if (changed) await this.scheduleFlush();
+    return changed;
+  }
+
   /**
    * Atomic-by-virtue-of-single-threadedness field increments.
    * Mirrors the mongo driver's `$inc` so counters behave the same either way.
    */
-  async increment(id, increments = {}) {
+  async increment(id, increments = {}, set = {}) {
     const current = this.docs.get(id);
     if (!current) return null;
+    return this.applyIncrement(id, current, increments, set);
+  }
 
+  /**
+   * Compare-and-swap increment. See the mongo driver for why this exists:
+   * claiming a limited resource needs the limit check and the increment to be
+   * one indivisible step.
+   *
+   * Node runs this synchronously between awaits, so within a single process the
+   * match-then-write pair cannot interleave.
+   */
+  async findOneAndIncrement(filter = {}, increments = {}, set = {}) {
+    const query = translateFilter(filter);
+
+    for (const [id, doc] of this.docs.entries()) {
+      if (matches(doc, query)) return this.applyIncrement(id, doc, increments, set);
+    }
+    return null;
+  }
+
+  /** Shared tail of increment / findOneAndIncrement. */
+  async applyIncrement(id, current, increments, set) {
     const next = { ...current };
+
     for (const [field, delta] of Object.entries(increments)) {
       const base = Number(next[field]);
       next[field] = (Number.isFinite(base) ? base : 0) + Number(delta || 0);
+    }
+    for (const [field, value] of Object.entries(set || {})) {
+      if (field === "_id" || field === "id") continue;
+      if (value === undefined) delete next[field];
+      else next[field] = LocalCollection.clone(value);
     }
     next.updatedAt = new Date().toISOString();
 
@@ -275,6 +328,75 @@ class LocalCollection {
   }
 }
 
+/** True when a process with this pid is still running. */
+function pidIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM means the process exists but belongs to another user.
+    return err.code === "EPERM";
+  }
+}
+
+/**
+ * Claim exclusive ownership of the data directory.
+ *
+ * This driver keeps every record in memory and rewrites whole files, so two
+ * processes sharing one directory would silently overwrite each other's work.
+ * A pid lock turns that data-loss scenario into a refusal to start.
+ *
+ * A lock left behind by a crashed process is detected (the pid is no longer
+ * alive) and reclaimed, so a hard kill does not require manual cleanup.
+ */
+async function acquireLock(dir) {
+  const lockFile = path.join(dir, ".lock");
+
+  try {
+    const raw = await fsp.readFile(lockFile, "utf8");
+    const holder = JSON.parse(raw);
+
+    if (holder.pid !== process.pid && pidIsAlive(holder.pid)) {
+      throw new Error(
+        `The local database at ${dir} is already in use by process ${holder.pid} ` +
+          `(locked at ${holder.since}). The local driver is single-process — run one ` +
+          `instance, use a separate LOCAL_DB_DIR, or switch to MongoDB with MONGODB_URI.`
+      );
+    }
+    // Stale or our own: fall through and overwrite.
+  } catch (err) {
+    if (err.code !== "ENOENT" && !(err instanceof SyntaxError)) throw err;
+  }
+
+  await fsp.writeFile(
+    lockFile,
+    JSON.stringify({ pid: process.pid, since: new Date().toISOString() }, null, 2),
+    "utf8"
+  );
+
+  return {
+    file: lockFile,
+    async release() {
+      // Only remove a lock we still own, so a reclaimed lock is not deleted
+      // out from under its new owner.
+      try {
+        const holder = JSON.parse(await fsp.readFile(lockFile, "utf8"));
+        if (holder.pid === process.pid) await fsp.unlink(lockFile);
+      } catch {
+        /* already gone */
+      }
+    },
+    releaseSync() {
+      try {
+        const holder = JSON.parse(fs.readFileSync(lockFile, "utf8"));
+        if (holder.pid === process.pid) fs.unlinkSync(lockFile);
+      } catch {
+        /* already gone */
+      }
+    },
+  };
+}
+
 /**
  * Open (creating if needed) the local database directory and its collections.
  * @param {{dir: string, collections: Record<string, {uniqueKeys?: string[]}>}} options
@@ -282,21 +404,30 @@ class LocalCollection {
 async function openStore({ dir, collections }) {
   await fsp.mkdir(dir, { recursive: true });
 
+  const lock = await acquireLock(dir);
+
   const opened = {};
-  for (const [name, options] of Object.entries(collections)) {
-    const collection = new LocalCollection(name, dir, options);
-    await collection.load();
-    opened[name] = collection;
+  try {
+    for (const [name, options] of Object.entries(collections)) {
+      const collection = new LocalCollection(name, dir, options);
+      await collection.load();
+      opened[name] = collection;
+    }
+  } catch (err) {
+    await lock.release();
+    throw err;
   }
 
   return {
     dir,
     collections: opened,
+    lock,
     async drain() {
       await Promise.all(Object.values(opened).map((c) => c.drain()));
     },
     async close() {
       await this.drain();
+      await lock.release();
     },
     /** Synchronous best-effort flush, used from process exit handlers. */
     flushSync() {
@@ -319,6 +450,7 @@ async function openStore({ dir, collections }) {
           /* best effort */
         }
       }
+      lock.releaseSync();
     },
   };
 }

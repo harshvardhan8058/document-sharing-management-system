@@ -1,25 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Badge, Button, DescriptionList, Field, Input, Segmented } from "../components/ui";
+import { Alert, Badge, Button, ConfirmDialog, DescriptionList, Field, Input, Segmented } from "../components/ui";
 import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { useTheme } from "../context/ThemeContext";
 import { formatBytes, formatDate, formatNumber, modifierKeyLabel } from "../lib/format";
+import { POLICY_HINT, scorePassword } from "../lib/password";
 
 const ACCENTS = ["#5b8cff", "#22d3ee", "#a855f7", "#f472b6", "#34d399", "#fbbf24", "#fb7185", "#818cf8"];
 
-function scorePassword(value = "") {
-  let score = 0;
-  if (value.length >= 8) score += 1;
-  if (value.length >= 12) score += 1;
-  if (/[a-z]/.test(value) && /[A-Z]/.test(value)) score += 1;
-  if (/\d/.test(value) && /[^A-Za-z0-9]/.test(value)) score += 1;
-  return { score, label: ["very weak", "weak", "fair", "strong", "excellent"][score] };
-}
-
 export default function Settings() {
-  const { user, setUser, refresh } = useAuth();
+  const { user, setUser, refresh, adoptToken, logout } = useAuth();
   const { overview, limits } = useWorkspace();
   const { theme, setTheme } = useTheme();
   const toast = useToast();
@@ -34,6 +26,8 @@ export default function Settings() {
   const [passwords, setPasswords] = useState({ currentPassword: "", newPassword: "", confirm: "" });
   const [changing, setChanging] = useState(false);
   const [passwordError, setPasswordError] = useState(null);
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const [revoking, setRevoking] = useState(false);
 
   const strength = useMemo(() => scorePassword(passwords.newPassword), [passwords.newPassword]);
 
@@ -71,17 +65,37 @@ export default function Settings() {
 
     setChanging(true);
     try {
-      await api.auth.changePassword({
+      const result = await api.auth.changePassword({
         currentPassword: passwords.currentPassword,
         newPassword: passwords.newPassword,
       });
-      toast.success("Password changed", "Use your new password next time you sign in.");
+
+      // The change invalidated every existing token, this tab's included. Adopt
+      // the replacement the server issued before making any further request.
+      adoptToken(result.token);
+
+      toast.success("Password changed", "Every other signed-in device has been signed out.");
       setPasswords({ currentPassword: "", newPassword: "", confirm: "" });
       await refresh();
     } catch (error) {
       setPasswordError(error);
     } finally {
       setChanging(false);
+    }
+  }
+
+  /** Invalidate every token, including this one, then land back on sign-in. */
+  async function signOutEverywhere() {
+    setRevoking(true);
+    try {
+      await api.auth.logoutAll();
+      toast.success("Signed out everywhere", "Every device will need to sign in again.");
+      logout();
+    } catch (error) {
+      toast.fromError(error, "Could not sign out other sessions");
+    } finally {
+      setRevoking(false);
+      setConfirmRevoke(false);
     }
   }
 
@@ -187,7 +201,7 @@ export default function Settings() {
             <div className="panel__header">
               <div>
                 <div className="panel__title">Password</div>
-                <div className="panel__subtitle">At least 8 characters, with a letter and a number</div>
+                <div className="panel__subtitle">{POLICY_HINT}</div>
               </div>
             </div>
 
@@ -267,6 +281,27 @@ export default function Settings() {
                 </Button>
               </div>
             </form>
+          </section>
+
+          <section className="panel panel--flush">
+            <div className="panel__header">
+              <div>
+                <div className="panel__title">Active sessions</div>
+                <div className="panel__subtitle">Revoke access on every device</div>
+              </div>
+            </div>
+            <div className="panel__body col gap-3">
+              <p className="text-sm muted">
+                Signing tokens are valid until they expire, so a lost laptop or a leaked token keeps
+                working on its own. This invalidates every token issued to your account immediately —
+                including this browser, so you will need to sign in again.
+              </p>
+              <div>
+                <Button variant="danger" icon="logout" onClick={() => setConfirmRevoke(true)}>
+                  Sign out everywhere
+                </Button>
+              </div>
+            </div>
           </section>
         </div>
 
@@ -360,6 +395,16 @@ export default function Settings() {
           </section>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmRevoke}
+        onClose={() => setConfirmRevoke(false)}
+        onConfirm={signOutEverywhere}
+        busy={revoking}
+        title="Sign out everywhere?"
+        message="Every token issued to your account will stop working immediately, including this browser. You will be returned to the sign-in screen."
+        confirmLabel="Sign out everywhere"
+      />
     </>
   );
 }

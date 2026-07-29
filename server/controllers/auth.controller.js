@@ -27,6 +27,11 @@ exports.changePassword = asyncHandler(async (req, res) => {
   res.json(await authService.changePassword(req.user.id, req.body, req));
 });
 
+/** Invalidate every token for this account, including the one making the call. */
+exports.revokeSessions = asyncHandler(async (req, res) => {
+  res.json(await authService.revokeAllSessions(req.user.id, req));
+});
+
 /** People picker for the share dialog. */
 exports.directory = asyncHandler(async (req, res) => {
   const users = await authService.directory({

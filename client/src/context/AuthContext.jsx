@@ -54,11 +54,12 @@ export function AuthProvider({ children }) {
     [toast]
   );
 
+  /** Adopt a credential response, returning the whole payload to the caller. */
   const adopt = useCallback((payload) => {
     tokenStore.set(payload.token);
     setUser(payload.user);
     setStatus("authenticated");
-    return payload.user;
+    return payload;
   }, []);
 
   const login = useCallback(
@@ -70,6 +71,18 @@ export function AuthProvider({ children }) {
     async (payload) => adopt(await api.auth.register(payload)),
     [adopt]
   );
+
+  /**
+   * Swap in a replacement token without changing who is signed in.
+   *
+   * Changing a password bumps the account's token version, which kills every
+   * token issued before it — including the one this tab is holding. The server
+   * hands back a freshly signed one so the user is not thrown out of the session
+   * they just secured.
+   */
+  const adoptToken = useCallback((token) => {
+    if (token) tokenStore.set(token);
+  }, []);
 
   const logout = useCallback(() => {
     tokenStore.clear();
@@ -94,9 +107,10 @@ export function AuthProvider({ children }) {
       register,
       logout,
       refresh,
+      adoptToken,
       setUser,
     }),
-    [user, status, login, register, logout, refresh]
+    [user, status, login, register, logout, refresh, adoptToken]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

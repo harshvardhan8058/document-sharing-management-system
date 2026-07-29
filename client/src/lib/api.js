@@ -256,6 +256,8 @@ export const api = {
     me: () => get("/auth/me"),
     updateProfile: (payload) => patch("/auth/me", payload),
     changePassword: (payload) => post("/auth/change-password", payload),
+    /** Invalidates every token for the account, this one included. */
+    logoutAll: () => post("/auth/logout-all"),
     passwordStrength: (password) => post("/auth/password-strength", { password }, { auth: false }),
     directory: (search) => get(`/auth/directory${query({ search })}`),
     myActivity: (params) => get(`/auth/me/activity${query(params)}`),
@@ -303,6 +305,14 @@ export const api = {
     overview: (days) => get(`/stats/overview${query({ days })}`),
     system: () => get("/stats/system"),
     activity: (params) => get(`/stats/activity${query(params)}`),
+  },
+
+  admin: {
+    users: (params) => get(`/admin/users${query(params)}`),
+    updateUser: (id, payload) => patch(`/admin/users/${id}`, payload),
+    storage: () => get("/admin/storage"),
+    purgeOrphans: () => post("/admin/storage/purge-orphans"),
+    runMaintenance: () => post("/admin/maintenance/run"),
   },
 };
 

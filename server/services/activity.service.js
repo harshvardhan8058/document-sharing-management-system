@@ -10,6 +10,8 @@ const ACTIONS = {
   "user.login": "Signed in",
   "user.profile_updated": "Updated their profile",
   "user.password_changed": "Changed their password",
+  "user.sessions_revoked": "Signed out of every session",
+  "admin.user_updated": "Updated an account",
 
   "document.uploaded": "Uploaded",
   "document.updated": "Updated details for",

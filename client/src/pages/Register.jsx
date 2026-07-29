@@ -4,21 +4,7 @@ import { Alert, Button, Field, Input } from "../components/ui";
 import { Link, useNavigate } from "../lib/router";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
-
-/**
- * Mirrors the server's password policy exactly (8+ chars, a letter, a number)
- * so the meter never promises something the API will reject.
- */
-function scorePassword(value = "") {
-  let score = 0;
-  if (value.length >= 8) score += 1;
-  if (value.length >= 12) score += 1;
-  if (/[a-z]/.test(value) && /[A-Z]/.test(value)) score += 1;
-  if (/\d/.test(value) && /[^A-Za-z0-9]/.test(value)) score += 1;
-  return { score, label: ["very weak", "weak", "fair", "strong", "excellent"][score] };
-}
-
-const meetsPolicy = (value) => value.length >= 8 && /[a-zA-Z]/.test(value) && /\d/.test(value);
+import { meetsPolicy, POLICY_HINT, scorePassword } from "../lib/password";
 
 export default function Register() {
   const { register } = useAuth();
@@ -54,11 +40,18 @@ export default function Register() {
 
     setBusy(true);
     try {
-      const user = await register(form);
-      toast.success(
-        `Welcome, ${user.firstName}`,
-        user.role === "admin" ? "You are the first account here, so you have admin rights." : undefined
-      );
+      const { user, pendingShares } = await register(form);
+
+      const notes = [];
+      if (user.role === "admin") notes.push("You are the first account here, so you have admin rights.");
+      if (pendingShares > 0) {
+        notes.push(
+          `${pendingShares} document${pendingShares === 1 ? "" : "s"} already shared with this address ` +
+            "are waiting in “Shared with me”."
+        );
+      }
+
+      toast.success(`Welcome, ${user.firstName}`, notes.join(" ") || undefined);
       navigate("/", { replace: true });
     } catch (err) {
       setError(err);
@@ -129,7 +122,7 @@ export default function Register() {
 
         <Field
           label="Password"
-          hint={form.password ? strength.label : "8+ characters, a letter and a number"}
+          hint={form.password ? strength.label : POLICY_HINT}
           error={fieldErrors.password}
           htmlFor="reg-password"
         >

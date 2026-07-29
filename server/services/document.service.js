@@ -1,6 +1,7 @@
 "use strict";
 
 const { db } = require("../data");
+const config = require("../config/env");
 const ApiError = require("../utils/ApiError");
 const { readPagination, buildMeta, readSort } = require("../utils/pagination");
 const {
@@ -19,6 +20,62 @@ const activity = require("./activity.service");
 const MAX_TAGS = 12;
 const MAX_TAG_LENGTH = 24;
 const VISIBILITIES = ["private", "internal", "public"];
+
+/**
+ * Bytes an owner actually occupies on disk.
+ *
+ * Sums every stored version, not just the current one, and counts trashed
+ * documents — both still consume disk until they are permanently deleted. A
+ * quota that ignored them would let someone exceed their allowance simply by
+ * uploading revisions or by never emptying their trash.
+ */
+async function usageBytesFor(ownerId) {
+  const documents = await db.documents.find({ ownerId });
+
+  return documents.reduce((total, doc) => {
+    const versions = doc.versions || [];
+    if (!versions.length) return total + (Number(doc.size) || 0);
+    return total + versions.reduce((sum, version) => sum + (Number(version.size) || 0), 0);
+  }, 0);
+}
+
+/** Resolve an owner's allowance, falling back to the deployment default. */
+async function quotaBytesFor(userId) {
+  const record = await db.users.findById(userId);
+  const configured = Number(record?.storageQuotaBytes);
+  return Number.isFinite(configured) && configured > 0 ? configured : config.storage.quotaBytes;
+}
+
+/**
+ * Refuse an upload that would push the owner past their allowance.
+ *
+ * The quota was previously displayed throughout the UI but never checked, so it
+ * was decoration. A quota of 0 disables the limit.
+ */
+async function assertWithinQuota({ userId, incomingBytes }) {
+  const quota = await quotaBytesFor(userId);
+  if (quota <= 0) return;
+
+  const used = await usageBytesFor(userId);
+  if (used + incomingBytes <= quota) return;
+
+  throw new ApiError(
+    413,
+    `This upload would exceed your ${formatBytes(quota)} storage allowance ` +
+      `(${formatBytes(used)} already in use). Delete something first, or empty your trash.`,
+    {
+      code: "STORAGE_QUOTA_EXCEEDED",
+      details: [
+        {
+          usedBytes: used,
+          quotaBytes: quota,
+          incomingBytes,
+          remainingBytes: Math.max(0, quota - used),
+        },
+      ],
+    }
+  );
+}
 
 /** Escape user input before it is used inside a RegExp. */
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -99,6 +156,29 @@ function present(document, { user = null, accessLevel = "view" } = {}) {
   };
 }
 
+/**
+ * The set of active documents this user is allowed to see, as a filter clause.
+ *
+ * Every scope that is not already restricted to the caller's own documents has
+ * to be intersected with this. `scope=starred` originally was not, which meant a
+ * star kept a document visible in the listing after its owner revoked access —
+ * leaking title, filename, owner and size (the file itself stayed protected).
+ * Keeping the rule in one function is what stops that from recurring.
+ */
+async function accessibleClause(user) {
+  if (user.role === "admin") return { status: "active" };
+
+  const sharedIds = await access.documentIdsSharedWith(user);
+  return {
+    status: "active",
+    $or: [
+      { ownerId: user.id },
+      ...(sharedIds.length ? [{ id: { $in: sharedIds } }] : []),
+      { visibility: { $in: ["internal", "public"] } },
+    ],
+  };
+}
+
 /** Build the driver-agnostic filter for a listing request. */
 async function buildListFilter({ user, query }) {
   const scope = String(query.scope || "all");
@@ -113,19 +193,11 @@ async function buildListFilter({ user, query }) {
     if (!ids.length) return null; // nothing shared — short-circuit
     clauses.push({ id: { $in: ids }, status: "active" });
   } else if (scope === "starred") {
-    clauses.push({ starredBy: user.id, status: "active" });
-  } else if (user.role === "admin") {
-    clauses.push({ status: "active" });
+    // Starring is a bookmark, never a grant: the accessibility clause still applies.
+    clauses.push({ starredBy: user.id });
+    clauses.push(await accessibleClause(user));
   } else {
-    const sharedIds = await access.documentIdsSharedWith(user);
-    clauses.push({
-      status: "active",
-      $or: [
-        { ownerId: user.id },
-        ...(sharedIds.length ? [{ id: { $in: sharedIds } }] : []),
-        { visibility: { $in: ["internal", "public"] } },
-      ],
-    });
+    clauses.push(await accessibleClause(user));
   }
 
   if (query.search) {
@@ -223,6 +295,9 @@ async function getOne({ id, user, req, countView = true }) {
 /** Create a document from an uploaded file. */
 async function create({ user, file, body = {}, req }) {
   if (!file) throw ApiError.badRequest("A file is required", { code: "FILE_REQUIRED" });
+
+  await storage.assertContentMatchesExtension(file);
+  await assertWithinQuota({ userId: user.id, incomingBytes: file.size });
 
   const originalName = sanitizeFilename(file.originalname);
   const extension = extensionOf(originalName);
@@ -331,6 +406,10 @@ async function addVersion({ id, user, file, body = {}, req }) {
   if (!file) throw ApiError.badRequest("A file is required", { code: "FILE_REQUIRED" });
 
   const { document, access: resolved } = await access.loadDocumentFor(id, user, "edit");
+
+  await storage.assertContentMatchesExtension(file);
+  // Versions are charged to the document's owner, not to whoever uploads them.
+  await assertWithinQuota({ userId: document.ownerId, incomingBytes: file.size });
 
   const originalName = sanitizeFilename(file.originalname);
   const mimeType = mimeTypeOf(originalName, file.mimetype || "application/octet-stream");
@@ -522,5 +601,9 @@ module.exports = {
   tagsFor,
   present,
   normalizeTags,
+  usageBytesFor,
+  quotaBytesFor,
+  assertWithinQuota,
+  accessibleClause,
   VISIBILITIES,
 };

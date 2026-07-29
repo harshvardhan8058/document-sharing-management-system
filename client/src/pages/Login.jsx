@@ -24,7 +24,7 @@ export default function Login() {
     setError(null);
 
     try {
-      const user = await login(form);
+      const { user } = await login(form);
       toast.success(`Welcome back, ${user.firstName}`);
       navigate("/", { replace: true });
     } catch (err) {
