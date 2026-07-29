@@ -4,16 +4,42 @@ A document vault with real authorization: upload and version files, share them w
 people or through revocable public links, and audit every action. Express/MongoDB API,
 React dashboard.
 
+![Dashboard](docs/screenshots/02-dashboard.webp)
+
+## Run it
+
+Needs **Node 18.17+** and nothing else — no database to install, no `.env` to write.
+
 ```bash
-npm run setup     # install server + client deps, build the client
-npm run seed      # optional: demo accounts and sample documents
-npm start         # http://localhost:4000
+git clone -b rebuild/full-stack-document-vault \
+  https://github.com/harshvardhan8058/document-sharing-management-system.git
+cd document-sharing-management-system
+
+npm run setup     # install server + client dependencies, build the interface
+npm run seed      # optional: demo accounts and five sample documents
+npm start         # then open http://localhost:4000
 ```
 
-No database installation required — see [Persistence](#persistence).
+Sign in with **`admin@dsms.dev`** / **`Admin@12345`** (admin) or `rio@dsms.dev` / `Member@12345`
+(member) to see sharing from the recipient's side. Without seeding, the first account you register
+becomes the admin.
 
-Seeded logins: `admin@dsms.dev` / `Admin@12345` (admin), `rio@dsms.dev` / `Member@12345` (member).
-On a fresh install with no seed, **the first account you register becomes the admin.**
+Working on the interface? `npm run client:dev` gives you Vite with hot reload on `:5173`, proxying
+the API to `:4000` (keep `npm run dev` running in another terminal).
+
+Point it at a real database whenever you want — set `MONGODB_URI` and restart. Nothing else changes.
+See [Persistence](#persistence).
+
+---
+
+## What it looks like
+
+| | |
+| --- | --- |
+| **Sign in**<br>![Sign in](docs/screenshots/01-sign-in.webp) | **Library**<br>![Documents](docs/screenshots/03-documents.webp) |
+| **Document detail** — preview, versions, audit trail<br>![Document detail](docs/screenshots/04-document-detail.webp) | **Sharing** — links with password, expiry, download cap<br>![Sharing](docs/screenshots/05-sharing.webp) |
+| **Public link**, opened with no account<br>![Public link](docs/screenshots/06-public-link.webp) | **Audit trail** — who, when, from where<br>![Activity](docs/screenshots/08-activity.webp) |
+| **Instance health** — accounts, quotas, disk reconciliation<br>![Admin](docs/screenshots/07-admin.webp) | **Mobile**<br><img src="docs/screenshots/09-mobile.webp" width="240" alt="Mobile layout"> |
 
 ---
 
