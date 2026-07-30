@@ -123,3 +123,19 @@ jobs:
           NODE_ENV: production
           JWT_SECRET: ci-build-check-secret-not-used-anywhere
           PORT: "4000"
+
+      # Drives the built interface in headless Chrome. GitHub's Ubuntu runners
+      # ship a browser; on an image without one the suite prints "Skipped" and
+      # exits 0 rather than failing.
+      - name: Interface suite (headless Chrome)
+        run: npm run verify:ui
+
+      # The screenshots are the evidence when an interface check fails.
+      - name: Upload interface screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: interface-screenshots
+          path: .verify-ui/screenshots
+          if-no-files-found: ignore
+          retention-days: 7

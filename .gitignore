@@ -14,8 +14,10 @@ node_modules/
 /logs/
 *.log
 
-# Verification sandbox (scripts/verify-api.js)
+# Verification sandboxes (scripts/verify-api.js, scripts/verify-ui.mjs)
 /.verify/
+/.verify-ui/
+/.verifyrun/
 
 # Client build output
 client/dist/

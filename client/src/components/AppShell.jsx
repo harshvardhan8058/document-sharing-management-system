@@ -71,9 +71,21 @@ export default function AppShell({ children }) {
 
   const openShare = useCallback((document) => setShareTarget(document), []);
 
+  /**
+   * Close the drawer, and if the address bar is pointing at that document, put it
+   * back on the library. Otherwise a closed drawer would leave a URL that
+   * reopens itself on reload.
+   */
+  const closeDocument = useCallback(() => {
+    setDrawerId(null);
+    if (/^\/documents\/[^/]+$/.test(window.location.pathname)) {
+      navigate("/documents", { replace: true });
+    }
+  }, [navigate]);
+
   const shell = useMemo(
-    () => ({ openUpload, openDocument, openShare, closeDocument: () => setDrawerId(null) }),
-    [openUpload, openDocument, openShare]
+    () => ({ openUpload, openDocument, openShare, closeDocument }),
+    [openUpload, openDocument, openShare, closeDocument]
   );
 
   // Global shortcuts. Ignored while the user is typing in a field.
@@ -345,7 +357,7 @@ export default function AppShell({ children }) {
       {drawerId ? (
         <DocumentDrawer
           documentId={drawerId}
-          onClose={() => setDrawerId(null)}
+          onClose={closeDocument}
           onChanged={notifyChanged}
           onShare={openShare}
         />

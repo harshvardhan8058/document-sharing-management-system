@@ -6,6 +6,7 @@ import { useToast } from "../context/ToastContext";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { useNavigate, useSearchParams } from "../lib/router";
 import { formatNumber } from "../lib/format";
+import { DOCUMENT_DRAG_TYPE, resolveDropIds } from "../lib/dragPayload";
 
 const PALETTE = ["#5b8cff", "#22d3ee", "#a855f7", "#f472b6", "#34d399", "#fbbf24", "#fb7185", "#818cf8"];
 const ICONS = ["files", "star", "shield", "spark", "clock", "users", "link", "grid", "activity"];
@@ -19,8 +20,17 @@ const ICONS = ["files", "star", "shield", "spark", "clock", "users", "link", "gr
  * outside the app degrades to the plain-text title instead of doing something
  * surprising.
  */
-export default function CollectionsNav({ selectedIds = [], onFiled }) {
-  const { collections, unfiledCount, reloadCollections, notifyChanged } = useWorkspace();
+export default function CollectionsNav({ selectedIds, onFiled }) {
+  const {
+    collections,
+    unfiledCount,
+    reloadCollections,
+    notifyChanged,
+    selectedDocumentIds,
+  } = useWorkspace();
+  // The library publishes its selection to the workspace; an explicit prop wins
+  // so this stays usable outside the shell.
+  const selection = selectedIds ?? selectedDocumentIds ?? [];
   const toast = useToast();
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -83,19 +93,7 @@ export default function CollectionsNav({ selectedIds = [], onFiled }) {
 
   /** Read the dragged document ids, falling back to the current selection. */
   function readDraggedIds(event) {
-    const raw = event.dataTransfer.getData("application/x-dsms-documents");
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw);
-        // A drag that starts on a selected card should carry the whole selection.
-        if (Array.isArray(parsed) && parsed.length) {
-          return parsed.length === 1 && selectedIds.includes(parsed[0]) ? selectedIds : parsed;
-        }
-      } catch {
-        /* fall through */
-      }
-    }
-    return selectedIds;
+    return resolveDropIds(event.dataTransfer.getData(DOCUMENT_DRAG_TYPE), selection);
   }
 
   async function fileInto(collection, event) {

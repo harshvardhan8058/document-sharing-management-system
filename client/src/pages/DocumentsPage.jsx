@@ -5,7 +5,7 @@ import BulkBar from "../components/BulkBar";
 import QuickLook from "../components/QuickLook";
 import { Icon } from "../lib/icons";
 import { api } from "../lib/api";
-import { useSearchParams } from "../lib/router";
+import { useParams, useSearchParams } from "../lib/router";
 import { useToast } from "../context/ToastContext";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { useShell } from "../components/AppShell";
@@ -62,9 +62,10 @@ const SCOPE_COPY = {
 
 export default function DocumentsPage({ scope = "all" }) {
   const toast = useToast();
-  const { revision, notifyChanged, collections, reloadCollections } = useWorkspace();
+  const { revision, notifyChanged, collections, reloadCollections, publishSelection } = useWorkspace();
   const { openDocument, openShare, openUpload } = useShell();
   const [params, setParams] = useSearchParams();
+  const routeParams = useParams();
 
   const copy = SCOPE_COPY[scope];
   const isTrash = scope === "trash";
@@ -95,6 +96,22 @@ export default function DocumentsPage({ scope = "all" }) {
 
   const documentIds = useMemo(() => state.documents.map((doc) => doc.id), [state.documents]);
   const selection = useSelection(documentIds);
+
+  /**
+   * Publish the selection to the shell so the collections in the sidebar can
+   * tell that a dragged card represents more than itself. Cleared on unmount so
+   * a stale selection cannot follow the user to another route.
+   */
+  useEffect(() => {
+    publishSelection(selection.selectedIds);
+  }, [selection.selectedIds, publishSelection]);
+
+  useEffect(() => () => publishSelection([]), [publishSelection]);
+
+  /** `/documents/:id` opens that document's drawer over the library. */
+  useEffect(() => {
+    if (routeParams?.id) openDocument(routeParams.id);
+  }, [routeParams?.id, openDocument]);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [quickLookIndex, setQuickLookIndex] = useState(null);
   const [cursor, setCursor] = useState(-1);
