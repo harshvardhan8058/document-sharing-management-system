@@ -42,6 +42,9 @@ function AuthenticatedApp() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/documents" element={<DocumentsPage scope="all" />} />
+          {/* A document is addressable, so a link to one can be shared. The page
+              behind it is the library, with that document's drawer opened. */}
+          <Route path="/documents/:id" element={<DocumentsPage scope="all" />} />
           <Route path="/shared" element={<DocumentsPage scope="shared" />} />
           <Route path="/starred" element={<DocumentsPage scope="starred" />} />
           <Route path="/trash" element={<DocumentsPage scope="trash" />} />

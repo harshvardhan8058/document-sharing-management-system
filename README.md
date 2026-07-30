@@ -82,7 +82,8 @@ See [Persistence](#persistence).
 | **Search inside files** | Opt-in content search over indexed text, with a highlighted excerpt showing *why* each result matched. |
 | **Discussion** | Threaded comments with `@mentions`, one level of replies, author-only editing and manager moderation. |
 | **Notifications** | In-app, pushed live over Server-Sent Events. A share or a mention appears without a reload. |
-| **Bulk actions** | Select many documents and trash, restore, delete, star or file them — with **Undo** rather than a confirmation. |
+| **Bulk actions** | Select many documents and trash, restore, delete or star them in one call — with **Undo** rather than a confirmation. Dragging a selection onto a collection files all of it. |
+| **Addressable documents** | Every document has its own URL, so "this one" can be sent to somebody. The link grants nothing on its own. |
 | **Versions** | Uploading a revision never overwrites history; any earlier version stays downloadable. |
 | **Sharing — people** | Grant `view` / `edit` / `manage` by email, with an optional expiry. Works before the recipient has an account. |
 | **Sharing — links** | Read-only anonymous links with optional password, expiry date and hard download cap. Revocable. |
@@ -101,8 +102,8 @@ slightly away from the cursor, metrics that count up so a refresh is legible, an
 changes via the View Transitions API.
 
 Grid and list layouts, drag-and-drop upload anywhere on the page (or `⌘/Ctrl V` to upload straight
-from the clipboard), a document drawer with inline preview and discussion, a `⌘/Ctrl K` command
-palette, faceted filtering, and an installable offline shell.
+from the clipboard), a document drawer with inline preview, discussion and a copy-link button, a
+`⌘/Ctrl K` command palette, faceted filtering, and an installable offline shell.
 
 It is keyboard-first. Arrow keys move a cursor through the grid, `Space` opens a Quick Look preview
 you can browse with `←`/`→`, `Enter` opens full details, `X` adds to a selection and `⌘/Ctrl A`
@@ -125,8 +126,6 @@ motion is decoration, and the interface is complete without it.
 
 Shortcuts are suppressed while you are typing in a field, so `/` and `X` stay ordinary characters
 where they should be.
-
-Keyboard: `⌘/Ctrl K` command palette · `/` focus search · `U` upload · `Esc` close.
 
 ---
 
@@ -229,6 +228,9 @@ client/
 scripts/
   seed.js             demo data
   verify-api.js       end-to-end API verification (both drivers)
+  verify-ui.mjs       end-to-end interface verification in headless Chrome
+  ui/browser.mjs      a small DevTools Protocol driver — no browser dependency
+  ui/checks.mjs       what the interface has to do, asserted behaviourally
 tests/                node:test unit tests — no test framework dependency
 .github/workflows/
   ci.yml              tests on Node 20/22, the API suite on both drivers, client build
@@ -251,7 +253,8 @@ npm run build        # install + build the client
 npm run seed         # demo accounts and documents (safe to re-run)
 npm test             # unit tests (node:test, no test framework dependency)
 npm run verify       # 140-check end-to-end API suite against a throwaway database
-npm run check        # both of the above
+npm run verify:ui    # 48-check interface suite in a real headless browser
+npm run check        # all three
 ```
 
 `npm run verify` boots the real server in-process against an isolated database and upload
@@ -265,7 +268,25 @@ the first failure.
 DB_DRIVER=mongo MONGODB_URI=mongodb://127.0.0.1:27017 npm run verify
 ```
 
-Both driver paths are exercised in CI, and both currently pass 140/140.
+Both driver paths are exercised in CI, and both currently pass 140/140. The interface suite runs there
+too, on the runner's own Chrome.
+
+**`npm run verify:ui` drives the built interface in headless Chrome.** It boots the real server against
+its own throwaway database, seeds it, and then uses the app: signs in, walks the library with the arrow
+keys, opens Quick Look with `Space`, selects with `Ctrl/Cmd A`, bulk-trashes and undoes, drags a
+three-document selection onto a collection, posts a comment, and has a *second account* comment from
+another session to prove the unread badge moves with no page load. It asserts on behaviour rather than
+markup — the keyboard cursor is checked by comparing computed styles, and the service worker by reading
+what it actually put in the cache.
+
+It needs a Chrome or Chromium binary and finds one in the usual places; `CHROME_PATH` overrides. With
+no browser installed it prints `Skipped` and exits `0`, so it is safe in a pipeline that has none —
+pass `--strict` to make a missing browser a failure instead. Screenshots of every step are written to
+`.verify-ui/screenshots`, and kept when something fails.
+
+There is no browser driver dependency: Node ships a `WebSocket`, and the DevTools Protocol's discovery
+endpoints are plain HTTP, so `scripts/ui/browser.mjs` is about 250 lines and the suite adds nothing to
+`package.json`.
 
 `npm test` covers the parts where a subtle mistake is expensive and invisible: the query dialect
 the two drivers share, scrypt hashing, magic-byte inspection, the compare-and-swap primitive behind
@@ -473,6 +494,22 @@ finished loading, silently swallowing every Tab press.
    expected "no access". It now re-authenticates, which is how the missing notification-on-revoke was
    found.
 
+### And two more that only a browser could find
+
+Both of these passed every API check and every unit test, because neither was a server bug. They are
+the reason `npm run verify:ui` now exists.
+
+1. **Dragging a selection onto a collection filed exactly one document.** The collections list lives in
+   the shell; the selection lived in the library page, and nothing connected them — `CollectionsNav`
+   took a `selectedIds` prop that no caller ever passed. So the branch meant to handle "this card is
+   part of a group" was unreachable, and dropping five highlighted documents filed the one under the
+   cursor, with a success toast for the other four. The selection is now published to the workspace,
+   and the decision moved into `client/src/lib/dragPayload.js` where it is unit tested.
+2. **A document had no address.** `/documents/:id` was not a route, so a link to a specific document
+   answered "There is nothing at this address" — in a document *sharing* application. It now opens
+   that document over the library, closing it puts the address bar back, and the drawer has a
+   copy-link button, because a URL nobody can obtain may as well not exist.
+
 ---
 
 ## Notes on a few decisions
@@ -570,9 +607,11 @@ interface does not teach it — a first-time user will reach for the mouse and n
 whole files. A pid lock makes a second process refuse to start rather than silently corrupt the
 data. It is meant for development, demos and CI — not production.
 
-**No component-level frontend tests.** The pure logic in `client/src/lib` is unit tested and the full
-interface has been driven end to end in a real headless browser, but there is no jsdom render suite,
-so a purely visual regression would not be caught automatically.
+**No component-level frontend tests.** The pure logic in `client/src/lib` is unit tested and
+`npm run verify:ui` drives the whole interface in a real browser, but there is no jsdom render suite for
+individual components, and nothing compares screenshots. A purely visual regression — a colour that
+drops to an unreadable contrast, a card that overlaps by a few pixels — would still get through. The
+browser suite also needs a Chrome binary, so it skips rather than runs where there is none.
 
 **Virus scanning is out of scope.** Content inspection stops disguised executables; it is not a
 malware scanner. Anything handling untrusted uploads at scale wants a real scanner in front.

@@ -35,6 +35,24 @@ export function WorkspaceProvider({ children }) {
   /** Bumped when a comment event arrives, so an open thread refetches. */
   const [commentRevision, setCommentRevision] = useState(0);
 
+  /**
+   * The library's current multi-selection, published so the sidebar can see it.
+   *
+   * Selection state belongs to the documents page, but the collections list that
+   * documents get dropped onto lives in the shell. Without a shared value the
+   * drop target cannot tell whether the card being dragged is part of a wider
+   * selection, and dragging five documents would file exactly one.
+   */
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState([]);
+  const publishSelection = useCallback((ids) => {
+    // Compare contents, not identity: this is called from an effect on every
+    // render of the documents page and must not schedule pointless updates.
+    setSelectedDocumentIds((current) => {
+      if (current.length === ids.length && current.every((id, index) => id === ids[index])) return current;
+      return ids;
+    });
+  }, []);
+
   const notifyChanged = useCallback(() => setRevision((value) => value + 1), []);
 
   // Upload limits are public and never change while the tab is open.
@@ -146,6 +164,9 @@ export function WorkspaceProvider({ children }) {
       commentRevision,
       live: connected,
 
+      selectedDocumentIds,
+      publishSelection,
+
       counts: {
         documents: overview?.totals.documents ?? null,
         shared: overview?.totals.sharedWithMe ?? null,
@@ -169,6 +190,8 @@ export function WorkspaceProvider({ children }) {
       liveNotification,
       commentRevision,
       connected,
+      selectedDocumentIds,
+      publishSelection,
     ]
   );
 
