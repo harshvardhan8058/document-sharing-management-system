@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, Chip, ConfirmDialog, Empty, IconButton, Input, Segmented, Select, Skeleton } from "../components/ui";
 import { DocumentCard, DocumentRow, DocumentRowHeader } from "../components/DocumentTile";
+import BulkBar from "../components/BulkBar";
+import QuickLook from "../components/QuickLook";
 import { Icon } from "../lib/icons";
 import { api } from "../lib/api";
 import { useSearchParams } from "../lib/router";
 import { useToast } from "../context/ToastContext";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { useShell } from "../components/AppShell";
+import { useSelection } from "../lib/useSelection";
 import { categoryLabel, formatNumber, pluralize } from "../lib/format";
 
 const SORTS = [
@@ -59,7 +62,7 @@ const SCOPE_COPY = {
 
 export default function DocumentsPage({ scope = "all" }) {
   const toast = useToast();
-  const { revision, notifyChanged } = useWorkspace();
+  const { revision, notifyChanged, collections, reloadCollections } = useWorkspace();
   const { openDocument, openShare, openUpload } = useShell();
   const [params, setParams] = useSearchParams();
 
@@ -85,6 +88,23 @@ export default function DocumentsPage({ scope = "all" }) {
   const visibility = params.get("visibility") || "";
   const sort = params.get("sort") || "newest";
   const page = Number(params.get("page")) || 1;
+  const collectionId = params.get("collectionId") || "";
+  const inContent = params.get("inContent") === "true";
+
+  // -- selection, quick look and keyboard navigation -------------------------
+
+  const documentIds = useMemo(() => state.documents.map((doc) => doc.id), [state.documents]);
+  const selection = useSelection(documentIds);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [quickLookIndex, setQuickLookIndex] = useState(null);
+  const [cursor, setCursor] = useState(-1);
+
+  // A refetch can remove documents; a selection must not outlive them.
+  useEffect(() => {
+    selection.prune(documentIds);
+  }, [documentIds, selection]);
+
+  const activeCollection = collections.find((entry) => entry.id === collectionId);
 
   useEffect(() => {
     document.title = `${copy.title} · DSMS`;
@@ -134,13 +154,15 @@ export default function DocumentsPage({ scope = "all" }) {
         visibility,
         sort,
         page,
+        collectionId,
+        inContent: inContent || undefined,
         limit: 24,
       });
       setState({ status: "ready", ...payload });
     } catch (error) {
       setState({ status: "error", error, documents: [], meta: null, facets: null });
     }
-  }, [scope, search, category, tag, visibility, sort, page]);
+  }, [scope, search, category, tag, visibility, sort, page, collectionId, inContent]);
 
   useEffect(() => {
     load();
@@ -159,7 +181,7 @@ export default function DocumentsPage({ scope = "all" }) {
     setParams({});
   };
 
-  const activeFilterCount = [search, category, tag, visibility].filter(Boolean).length;
+  const activeFilterCount = [search, category, tag, visibility, collectionId].filter(Boolean).length;
 
   async function toggleStar(doc) {
     // Optimistic: flip locally, roll back if the server disagrees.
@@ -221,6 +243,157 @@ export default function DocumentsPage({ scope = "all" }) {
     }
   }
 
+  /**
+   * Run a bulk action, then offer to reverse it where that is meaningful.
+   *
+   * Trashing many documents at once is exactly where a mis-click hurts most, so
+   * it gets an Undo rather than a confirmation dialog — cheaper to dismiss, and
+   * it still protects you.
+   */
+  async function runBulk(action, { undo } = {}) {
+    const ids = selection.selectedIds;
+    if (!ids.length) return;
+
+    setBulkBusy(true);
+    try {
+      const result = await api.documents.bulk(action, ids);
+      const noun = pluralize(result.succeeded, "document");
+
+      if (undo) {
+        toast.undoable({
+          title: `${noun} ${undo.pastTense}`,
+          body: result.failed?.length ? `${result.failed.length} could not be changed.` : undefined,
+          onUndo: async () => {
+            try {
+              await api.documents.bulk(undo.action, result.succeededIds);
+              toast.success(`Restored ${noun}`);
+              notifyChanged();
+            } catch (error) {
+              toast.fromError(error, "Could not undo that");
+            }
+          },
+        });
+      } else {
+        toast.success(`${noun} updated`, result.failed?.length ? `${result.failed.length} skipped.` : undefined);
+      }
+
+      selection.clear();
+      notifyChanged();
+    } catch (error) {
+      toast.fromError(error, `Could not ${action} those documents`);
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function fileSelection(targetCollectionId) {
+    const ids = selection.selectedIds;
+    setBulkBusy(true);
+    try {
+      const result = targetCollectionId
+        ? await api.collections.assign(targetCollectionId, ids)
+        : await api.collections.unfile(ids);
+
+      toast.success(`Filed ${pluralize(result.moved, "document")}`);
+      selection.clear();
+      await reloadCollections();
+      notifyChanged();
+    } catch (error) {
+      toast.fromError(error, "Could not file those documents");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  /** Download each selected document in turn. */
+  async function downloadSelection() {
+    const chosen = state.documents.filter((doc) => selection.isSelected(doc.id));
+    setBulkBusy(true);
+    try {
+      for (const doc of chosen) {
+        // Sequential: a burst of parallel downloads gets throttled by the browser.
+        await api.documents.download(doc.id, { filename: doc.file.originalName });
+      }
+      toast.success(`Downloaded ${pluralize(chosen.length, "document")}`);
+      notifyChanged();
+    } catch (error) {
+      toast.fromError(error, "Download failed");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  /**
+   * Keyboard navigation over the grid.
+   *
+   * Arrow keys move a cursor, Space opens Quick Look, Enter opens the full
+   * drawer, and ⌘/Ctrl+A selects the page — the same gestures a file manager
+   * uses, so nothing here has to be learned.
+   */
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      const target = event.target;
+      const typing =
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+
+      // Quick Look owns the keyboard while it is open.
+      if (typing || quickLookIndex !== null) return;
+      if (!state.documents.length) return;
+
+      const columns = view === "grid" ? 4 : 1;
+      const last = state.documents.length - 1;
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        selection.selectAll();
+        return;
+      }
+
+      if (event.key === "Escape" && selection.active) {
+        selection.clear();
+        return;
+      }
+
+      const move = {
+        ArrowRight: 1,
+        ArrowLeft: -1,
+        ArrowDown: columns,
+        ArrowUp: -columns,
+      }[event.key];
+
+      if (move !== undefined) {
+        event.preventDefault();
+        setCursor((current) => Math.max(0, Math.min(last, (current < 0 ? 0 : current) + move)));
+        return;
+      }
+
+      if (cursor < 0) return;
+
+      if (event.key === " " || event.code === "Space") {
+        event.preventDefault();
+        setQuickLookIndex(cursor);
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        openDocument(state.documents[cursor].id);
+      } else if (event.key.toLowerCase() === "x") {
+        event.preventDefault();
+        selection.toggle(state.documents[cursor].id);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [state.documents, view, cursor, selection, quickLookIndex, openDocument]);
+
+  // Keep the focused card in view as the cursor moves.
+  useEffect(() => {
+    if (cursor < 0) return;
+    const id = state.documents[cursor]?.id;
+    if (!id) return;
+    document.querySelector(`[data-doc-id="${id}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [cursor, state.documents]);
+
   const categories = useMemo(
     () =>
       Object.entries(state.facets?.categories || {})
@@ -236,11 +409,31 @@ export default function DocumentsPage({ scope = "all" }) {
     <>
       <div className="page-head">
         <div>
-          <div className="page-head__eyebrow">{copy.eyebrow}</div>
-          <h1 className="page-head__title">{copy.title}</h1>
+          <div className="page-head__eyebrow">
+            {activeCollection ? "Collection" : collectionId === "none" ? "Unfiled" : copy.eyebrow}
+          </div>
+          <h1 className="page-head__title row gap-3" style={{ alignItems: "center" }}>
+            {activeCollection ? (
+              <>
+                <span
+                  className="collection-dot"
+                  style={{ background: activeCollection.color, color: activeCollection.color, width: 12, height: 12 }}
+                />
+                {activeCollection.name}
+              </>
+            ) : collectionId === "none" ? (
+              "Unfiled"
+            ) : (
+              copy.title
+            )}
+          </h1>
           <p className="page-head__sub">
             {meta ? `${formatNumber(meta.total)} ${meta.total === 1 ? "document" : "documents"} · ` : ""}
-            {copy.subtitle}
+            {activeCollection
+              ? activeCollection.description || "Drag documents onto a collection in the sidebar to file them."
+              : collectionId === "none"
+                ? "Documents that are not in any collection."
+                : copy.subtitle}
           </p>
         </div>
 
@@ -305,6 +498,17 @@ export default function DocumentsPage({ scope = "all" }) {
               <option value="public">Public</option>
             </Select>
           ) : null}
+
+          {/* Searching inside files is opt-in: it is slower, and a body match is
+              a different kind of result than a title match. */}
+          <label className="checkbox" title="Also search the text inside documents">
+            <input
+              type="checkbox"
+              checked={inContent}
+              onChange={(event) => setParam("inContent", event.target.checked ? "true" : "")}
+            />
+            <span className="text-xs">Search contents</span>
+          </label>
 
           {activeFilterCount ? (
             <Button variant="ghost" size="sm" icon="close" onClick={clearFilters}>
@@ -389,7 +593,7 @@ export default function DocumentsPage({ scope = "all" }) {
       {state.status !== "loading" && state.status !== "error" ? (
         state.documents.length ? (
           view === "grid" ? (
-            <div className="grid-docs stagger">
+            <div className="grid-docs">
               {state.documents.map((doc, index) =>
                 isTrash ? (
                   <TrashCard key={doc.id} document={doc} onRestore={restore} onOpen={openDocument} index={index} />
@@ -398,10 +602,15 @@ export default function DocumentsPage({ scope = "all" }) {
                     key={doc.id}
                     document={doc}
                     index={index}
+                    focused={cursor === index}
                     onOpen={openDocument}
                     onToggleStar={toggleStar}
                     onDownload={download}
                     onShare={openShare}
+                    selected={selection.isSelected(doc.id)}
+                    selectionMode={selection.active}
+                    onToggleSelect={(target) => selection.toggle(target.id)}
+                    matchSnippet={doc.matchExcerpt}
                   />
                 )
               )}
@@ -470,6 +679,52 @@ export default function DocumentsPage({ scope = "all" }) {
             </Button>
           </div>
         </div>
+      ) : null}
+
+      <BulkBar
+        count={selection.count}
+        allSelected={selection.allSelected}
+        collections={collections}
+        busy={bulkBusy}
+        scope={scope}
+        onClear={selection.clear}
+        onSelectAll={selection.selectAll}
+        onTrash={() => runBulk("trash", { undo: { action: "restore", pastTense: "moved to trash" } })}
+        onRestore={() => runBulk("restore", { undo: { action: "trash", pastTense: "restored" } })}
+        onDelete={() => runBulk("delete")}
+        onStar={() => runBulk("star")}
+        onUnstar={() => runBulk("unstar")}
+        onFile={fileSelection}
+        onDownload={downloadSelection}
+      />
+
+      {quickLookIndex !== null && state.documents[quickLookIndex] ? (
+        <QuickLook
+          document={state.documents[quickLookIndex]}
+          position={{ index: quickLookIndex + 1, total: state.documents.length }}
+          onClose={() => setQuickLookIndex(null)}
+          onDownload={download}
+          onOpenDetail={(doc) => {
+            setQuickLookIndex(null);
+            openDocument(doc.id);
+          }}
+          onPrev={
+            quickLookIndex > 0
+              ? () => {
+                  setQuickLookIndex(quickLookIndex - 1);
+                  setCursor(quickLookIndex - 1);
+                }
+              : undefined
+          }
+          onNext={
+            quickLookIndex < state.documents.length - 1
+              ? () => {
+                  setQuickLookIndex(quickLookIndex + 1);
+                  setCursor(quickLookIndex + 1);
+                }
+              : undefined
+          }
+        />
       ) : null}
 
       <ConfirmDialog

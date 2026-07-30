@@ -5,6 +5,7 @@ const { body, param, query } = require("express-validator");
 
 const controller = require("../controllers/document.controller");
 const shareController = require("../controllers/share.controller");
+const commentController = require("../controllers/comment.controller");
 const validate = require("../middleware/validate");
 const { requireAuth } = require("../middleware/auth");
 const { singleFile } = require("../middleware/upload");
@@ -53,6 +54,28 @@ router.get(
 router.get("/tags", controller.tags);
 
 router.delete("/trash/empty", controller.emptyTrash);
+
+router.post(
+  "/bulk",
+  [
+    body("action").isIn(["trash", "restore", "delete", "star", "unstar"]).withMessage("Unknown bulk action"),
+    body("documentIds")
+      .isArray({ min: 1, max: 200 })
+      .withMessage("documentIds must be an array of 1-200 ids")
+      .bail()
+      .custom((ids) => ids.every((id) => OBJECT_ID_PATTERN.test(String(id))))
+      .withMessage("documentIds contains an invalid id"),
+  ],
+  validate,
+  controller.bulk
+);
+
+router.post(
+  "/duplicate-check",
+  [body("checksum").matches(/^[0-9a-fA-F]{64}$/).withMessage("checksum must be a hex SHA-256 digest")],
+  validate,
+  controller.duplicateCheck
+);
 
 router.post("/", singleFile("file"), metadataRules, validate, controller.create);
 
@@ -111,6 +134,44 @@ router.delete(
     return permanent ? controller.destroy(req, res, next) : controller.trash(req, res, next);
   }
 );
+
+// ---------------------------------------------------------------------------
+// Sharing (owner side)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Discussion
+// ---------------------------------------------------------------------------
+
+const commentIdParam = param("commentId")
+  .matches(OBJECT_ID_PATTERN)
+  .withMessage("Not a valid comment id");
+
+router.get("/:id/comments", [documentId], validate, commentController.list);
+
+router.post(
+  "/:id/comments",
+  [
+    documentId,
+    body("body").isString().trim().isLength({ min: 1, max: 4000 }).withMessage("A comment cannot be empty"),
+    body("parentId").optional({ values: "null" }).matches(OBJECT_ID_PATTERN),
+  ],
+  validate,
+  commentController.create
+);
+
+router.patch(
+  "/:id/comments/:commentId",
+  [
+    documentId,
+    commentIdParam,
+    body("body").isString().trim().isLength({ min: 1, max: 4000 }),
+  ],
+  validate,
+  commentController.update
+);
+
+router.delete("/:id/comments/:commentId", [documentId, commentIdParam], validate, commentController.remove);
 
 // ---------------------------------------------------------------------------
 // Sharing (owner side)

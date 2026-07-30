@@ -53,6 +53,15 @@ export function ToastProvider({ children }) {
       error: (title, body) => push({ tone: "error", title, body }),
       warning: (title, body) => push({ tone: "warning", title, body }),
       info: (title, body) => push({ tone: "info", title, body }),
+
+      /**
+       * A toast offering to reverse what just happened.
+       *
+       * Held on screen much longer than a plain confirmation, because the whole
+       * point is that the user has time to notice and change their mind.
+       */
+      undoable: ({ title, body, onUndo, label = "Undo", duration = 9000 }) =>
+        push({ tone: "success", title, body, duration, action: { label, onClick: onUndo } }),
       /**
        * Report a thrown ApiError with its field details flattened into the body,
        * so validation failures are actionable without opening dev tools.
@@ -80,6 +89,21 @@ export function ToastProvider({ children }) {
             <div>
               <div className="toast__title">{toast.title}</div>
               {toast.body ? <div className="toast__body">{toast.body}</div> : null}
+
+              {/* An inline action turns a toast into a reversal path — "Undo"
+                  is far kinder than a confirmation dialog before every delete. */}
+              {toast.action ? (
+                <button
+                  type="button"
+                  className="toast__action"
+                  onClick={async () => {
+                    dismiss(toast.id);
+                    await toast.action.onClick?.();
+                  }}
+                >
+                  {toast.action.label}
+                </button>
+              ) : null}
             </div>
             <button
               type="button"

@@ -17,6 +17,21 @@ import "./styles/index.css";
  *   Toast     — AuthProvider raises toasts when a session expires
  *   Auth      — everything else depends on the session
  */
+/**
+ * Register the offline shell.
+ *
+ * Production only: a service worker in front of the Vite dev server would serve
+ * stale modules and make hot reload behave inexplicably. It never caches /api —
+ * see public/sw.js for why that matters here.
+ */
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      // An unavailable service worker costs offline support and nothing else.
+    });
+  });
+}
+
 createRoot(document.getElementById("root")).render(
   <StrictMode>
     <ErrorBoundary>

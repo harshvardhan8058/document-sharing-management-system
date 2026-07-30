@@ -266,6 +266,8 @@ export const api = {
   documents: {
     list: (params) => get(`/documents${query(params)}`),
     tags: () => get("/documents/tags"),
+    bulk: (action, documentIds) => post("/documents/bulk", { action, documentIds }),
+    duplicateCheck: (checksum) => post("/documents/duplicate-check", { checksum }),
     get: (id) => get(`/documents/${id}`),
     create: (formData, onProgress) => upload("/documents", formData, { onProgress }),
     update: (id, payload) => patch(`/documents/${id}`, payload),
@@ -305,6 +307,32 @@ export const api = {
     overview: (days) => get(`/stats/overview${query({ days })}`),
     system: () => get("/stats/system"),
     activity: (params) => get(`/stats/activity${query(params)}`),
+  },
+
+  collections: {
+    list: () => get("/collections"),
+    create: (payload) => post("/collections", payload),
+    update: (id, payload) => patch(`/collections/${id}`, payload),
+    remove: (id) => del(`/collections/${id}`),
+    assign: (id, documentIds) => post(`/collections/${id}/documents`, { documentIds }),
+    unfile: (documentIds) => post("/collections/unfile", { documentIds }),
+  },
+
+  comments: {
+    list: (documentId) => get(`/documents/${documentId}/comments`),
+    create: (documentId, payload) => post(`/documents/${documentId}/comments`, payload),
+    update: (documentId, commentId, body) => patch(`/documents/${documentId}/comments/${commentId}`, { body }),
+    remove: (documentId, commentId) => del(`/documents/${documentId}/comments/${commentId}`),
+  },
+
+  notifications: {
+    list: (params) => get(`/notifications${query(params)}`),
+    unreadCount: () => get("/notifications/unread-count"),
+    markRead: (id) => post(`/notifications/${id}/read`),
+    markAllRead: () => post("/notifications/read-all"),
+    clearRead: () => del("/notifications/read"),
+    /** Single-use ticket for the SSE stream — EventSource cannot send headers. */
+    streamTicket: () => post("/notifications/stream/ticket"),
   },
 
   admin: {

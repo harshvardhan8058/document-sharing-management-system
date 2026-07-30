@@ -79,6 +79,23 @@ exports.emptyTrash = asyncHandler(async (req, res) => {
   res.json(await documentService.emptyTrash({ user: req.user, req }));
 });
 
+/** Apply one action to many documents, reporting per-document failures. */
+exports.bulk = asyncHandler(async (req, res) => {
+  res.json(
+    await documentService.bulk({
+      user: req.user,
+      action: req.body.action,
+      documentIds: req.body.documentIds,
+      req,
+    })
+  );
+});
+
+/** Check a locally-computed SHA-256 before spending bandwidth on the upload. */
+exports.duplicateCheck = asyncHandler(async (req, res) => {
+  res.json(await documentService.findDuplicate({ user: req.user, checksum: req.body.checksum }));
+});
+
 /**
  * Stream the file as an attachment.
  *

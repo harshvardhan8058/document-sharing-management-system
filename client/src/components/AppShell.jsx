@@ -4,6 +4,7 @@ import { BrandMark, Icon } from "../lib/icons";
 import { Button, IconButton, Input, Progress } from "./ui";
 import { useAuth } from "../context/AuthContext";
 import { useWorkspace } from "../context/WorkspaceContext";
+import { useToast } from "../context/ToastContext";
 import { useTheme } from "../context/ThemeContext";
 import { useDocumentDrop } from "../lib/useDocumentDrop";
 import { formatNumber, modifierKeyLabel, usageTone } from "../lib/format";
@@ -11,6 +12,8 @@ import UploadDialog from "./UploadDialog";
 import ShareDialog from "./ShareDialog";
 import DocumentDrawer from "./DocumentDrawer";
 import CommandPalette from "./CommandPalette";
+import NotificationCenter from "./NotificationCenter";
+import CollectionsNav from "./CollectionsNav";
 
 const ShellContext = createContext(null);
 
@@ -35,7 +38,8 @@ const SECONDARY_NAV = [
 
 export default function AppShell({ children }) {
   const { user, logout, isAdmin } = useAuth();
-  const { limits, overview, counts, notifyChanged } = useWorkspace();
+  const { limits, overview, counts, notifyChanged, liveNotification, clearLiveNotification } = useWorkspace();
+  const toast = useToast();
   const { isDark, toggle: toggleTheme } = useTheme();
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -104,6 +108,46 @@ export default function AppShell({ children }) {
   // Close the mobile drawer whenever the route changes.
   useEffect(() => setSidebarOpen(false), [pathname]);
 
+  /**
+   * Paste a file to upload it.
+   *
+   * Screenshots live on the clipboard, never on disk — without this, sharing one
+   * means saving it somewhere first just to pick it back up.
+   */
+  useEffect(() => {
+    const onPaste = (event) => {
+      const target = event.target;
+      // Never hijack a paste the user aimed at a text field.
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+      ) {
+        return;
+      }
+
+      const files = Array.from(event.clipboardData?.files || []);
+      if (!files.length) return;
+
+      event.preventDefault();
+      setDroppedFiles(files);
+      setUploadOpen(true);
+    };
+
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, []);
+
+  /** Surface a live notification as a toast, then clear it. */
+  useEffect(() => {
+    if (!liveNotification) return;
+    toast.push({
+      tone: "info",
+      title: liveNotification.title,
+      body: liveNotification.body || undefined,
+    });
+    clearLiveNotification();
+  }, [liveNotification, clearLiveNotification, toast]);
+
   const submitSearch = (event) => {
     event.preventDefault();
     const term = search.trim();
@@ -133,6 +177,11 @@ export default function AppShell({ children }) {
 
   return (
     <ShellContext.Provider value={shell}>
+      {/* First stop for keyboard users: skip the sidebar and topbar entirely. */}
+      <a className="skip-link" href="#main-content">
+        Skip to main content
+      </a>
+
       <div className="shell">
         {sidebarOpen ? (
           <div className="sidebar-scrim only-mobile" onClick={() => setSidebarOpen(false)} aria-hidden="true" />
@@ -158,6 +207,9 @@ export default function AppShell({ children }) {
 
             <div className="nav__section">Workspace</div>
             {SECONDARY_NAV.map(renderNavLink)}
+
+            {/* Documents can be dragged straight onto a collection. */}
+            <CollectionsNav />
 
             {isAdmin ? (
               <>
@@ -241,6 +293,7 @@ export default function AppShell({ children }) {
                   <span className="kbd">K</span>
                 </span>
               </Button>
+              <NotificationCenter onOpenDocument={openDocument} />
               <IconButton
                 icon={isDark ? "sun" : "moon"}
                 label={isDark ? "Switch to the light theme" : "Switch to the dark theme"}
@@ -249,7 +302,9 @@ export default function AppShell({ children }) {
             </div>
           </header>
 
-          <main className="content">{children}</main>
+          <main className="content" id="main-content">
+            {children}
+          </main>
         </div>
       </div>
 

@@ -1,17 +1,22 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useAuth } from "./AuthContext";
+import { useEventStream } from "../lib/useEventStream";
 
 const WorkspaceContext = createContext(null);
 
 /**
- * Cross-page workspace state: server limits, dashboard counters, and a single
- * `revision` counter.
+ * Cross-page workspace state: server limits, dashboard counters, collections,
+ * notifications, and the live event stream.
  *
- * Anything that mutates documents calls `notifyChanged()`; every list watches
- * `revision` and refetches. That keeps sidebar counts, the dashboard and the
- * open document list consistent after an upload or a delete without a global
- * store or manual cache invalidation at each call site.
+ * Two mechanisms live here on purpose:
+ *
+ *  - `revision` is a single counter that anything mutating documents bumps via
+ *    `notifyChanged()`. Every list watches it and refetches, which keeps the
+ *    sidebar counts, the dashboard and the open document list consistent without
+ *    a global store or hand-written cache invalidation at each call site.
+ *  - the SSE subscription, so one connection serves the whole app rather than
+ *    each component opening its own.
  */
 export function WorkspaceProvider({ children }) {
   const { isAuthenticated } = useAuth();
@@ -21,6 +26,14 @@ export function WorkspaceProvider({ children }) {
   const [overviewError, setOverviewError] = useState(null);
   const [loadingOverview, setLoadingOverview] = useState(false);
   const [revision, setRevision] = useState(0);
+
+  const [collections, setCollections] = useState([]);
+  const [unfiledCount, setUnfiledCount] = useState(0);
+
+  const [unread, setUnread] = useState(0);
+  const [liveNotification, setLiveNotification] = useState(null);
+  /** Bumped when a comment event arrives, so an open thread refetches. */
+  const [commentRevision, setCommentRevision] = useState(0);
 
   const notifyChanged = useCallback(() => setRevision((value) => value + 1), []);
 
@@ -54,13 +67,62 @@ export function WorkspaceProvider({ children }) {
     }
   }, [isAuthenticated]);
 
+  const reloadCollections = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      const payload = await api.collections.list();
+      setCollections(payload.collections);
+      setUnfiledCount(payload.unfiled);
+    } catch {
+      // Collections are a navigation aid; failing to load them must not break
+      // the page around them.
+    }
+  }, [isAuthenticated]);
+
+  const reloadUnread = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      const { unread: count } = await api.notifications.unreadCount();
+      setUnread(count);
+    } catch {
+      /* badge is cosmetic */
+    }
+  }, [isAuthenticated]);
+
   useEffect(() => {
     if (!isAuthenticated) {
       setOverview(null);
+      setCollections([]);
+      setUnread(0);
       return;
     }
     reloadOverview();
-  }, [isAuthenticated, revision, reloadOverview]);
+    reloadCollections();
+    reloadUnread();
+  }, [isAuthenticated, revision, reloadOverview, reloadCollections, reloadUnread]);
+
+  // ---------------------------------------------------------------------------
+  // Live updates
+  // ---------------------------------------------------------------------------
+
+  const handlers = useRef({});
+  handlers.current = useMemo(
+    () => ({
+      notification: (payload) => {
+        if (!payload) return;
+        setUnread(payload.unread ?? 0);
+        // Surfaced by AppShell as a toast, then cleared.
+        setLiveNotification(payload.notification);
+      },
+      "notifications.read": (payload) => setUnread(payload?.unread ?? 0),
+      "comment.created": () => setCommentRevision((value) => value + 1),
+      "comment.updated": () => setCommentRevision((value) => value + 1),
+      "comment.deleted": () => setCommentRevision((value) => value + 1),
+    }),
+    []
+  );
+
+  const { connected } = useEventStream(isAuthenticated, handlers.current);
 
   const value = useMemo(
     () => ({
@@ -71,6 +133,19 @@ export function WorkspaceProvider({ children }) {
       revision,
       notifyChanged,
       reloadOverview,
+
+      collections,
+      unfiledCount,
+      reloadCollections,
+
+      unread,
+      setUnread,
+      reloadUnread,
+      liveNotification,
+      clearLiveNotification: () => setLiveNotification(null),
+      commentRevision,
+      live: connected,
+
       counts: {
         documents: overview?.totals.documents ?? null,
         shared: overview?.totals.sharedWithMe ?? null,
@@ -78,7 +153,23 @@ export function WorkspaceProvider({ children }) {
         trashed: overview?.totals.trashed ?? null,
       },
     }),
-    [limits, overview, overviewError, loadingOverview, revision, notifyChanged, reloadOverview]
+    [
+      limits,
+      overview,
+      overviewError,
+      loadingOverview,
+      revision,
+      notifyChanged,
+      reloadOverview,
+      collections,
+      unfiledCount,
+      reloadCollections,
+      unread,
+      reloadUnread,
+      liveNotification,
+      commentRevision,
+      connected,
+    ]
   );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

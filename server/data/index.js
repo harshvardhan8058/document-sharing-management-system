@@ -11,6 +11,9 @@ const userSchema = require("./mongoose/models/user");
 const documentSchema = require("./mongoose/models/document");
 const shareSchema = require("./mongoose/models/share");
 const activitySchema = require("./mongoose/models/activity");
+const collectionSchema = require("./mongoose/models/collection");
+const commentSchema = require("./mongoose/models/comment");
+const notificationSchema = require("./mongoose/models/notification");
 
 /** Collection name -> local-driver options. Mongo gets its constraints from the schemas. */
 const COLLECTIONS = {
@@ -18,6 +21,9 @@ const COLLECTIONS = {
   documents: {},
   shares: {},
   activities: {},
+  collections: {},
+  comments: {},
+  notifications: {},
 };
 
 const MONGOOSE_SCHEMAS = {
@@ -25,6 +31,9 @@ const MONGOOSE_SCHEMAS = {
   documents: { modelName: "Document", schema: documentSchema },
   shares: { modelName: "Share", schema: shareSchema },
   activities: { modelName: "Activity", schema: activitySchema },
+  collections: { modelName: "Collection", schema: collectionSchema },
+  comments: { modelName: "Comment", schema: commentSchema },
+  notifications: { modelName: "Notification", schema: notificationSchema },
 };
 
 /**
@@ -41,6 +50,9 @@ const db = {
   documents: null,
   shares: null,
   activities: null,
+  collections: null,
+  comments: null,
+  notifications: null,
   /** @type {null | {drain(): Promise<void>, close(): Promise<void>, flushSync(): void}} */
   _localStore: null,
   _mongoose: null,
