@@ -10,13 +10,25 @@
 export async function runChecks({ page, base, report, shot }) {
   const { section, check } = report;
 
+  /**
+   * Open the library and wait until it has actually rendered.
+   *
+   * Every keystroke below acts on the loaded list, and an assertion that counts
+   * cards is meaningless before the first fetch resolves — "no results" and "not
+   * loaded yet" look identical in the DOM.
+   */
+  const openLibrary = async (pathname = "/documents") => {
+    await page.goto(`${base}${pathname}`);
+    await page.waitFor("document.querySelectorAll('article.doc-card').length > 0", { label: "the library to load" });
+  };
+
   const signIn = async (email, password) => {
     await page.goto(base);
     await page.fill("#login-email", email);
     await page.fill("#login-password", password);
     await page.click("button[type=submit]");
     await page.waitFor("Boolean(localStorage['dsms.token'])", { label: "a stored session" });
-    await page.goto(`${base}/documents`);
+    await openLibrary();
   };
 
   // ------------------------------------------------------------------ sign in
@@ -59,7 +71,11 @@ export async function runChecks({ page, base, report, shot }) {
     return s.borderColor + '||' + s.boxShadow;
   `);
   await page.press("ArrowRight");
+  await page.waitFor("Boolean(document.querySelector('.doc-card.card-focused'))", { label: "the keyboard cursor" });
   await page.press("ArrowLeft");
+  await page.waitFor("document.querySelector('article.doc-card').classList.contains('card-focused')", {
+    label: "the cursor to come back to the first card",
+  });
   const cursorStyle = await page.eval(`
     const el = document.querySelector('article.doc-card');
     const s = getComputedStyle(el);
@@ -118,8 +134,10 @@ export async function runChecks({ page, base, report, shot }) {
 
   // -------------------------------------------------------- bulk actions/undo
   section("Selection and bulk actions");
-  await page.goto(`${base}/documents`);
+  await openLibrary();
   await page.press("ArrowRight");
+  // `x` acts on the cursored card, so the cursor has to exist before pressing it.
+  await page.waitFor("Boolean(document.querySelector('.doc-card.card-focused'))", { label: "the keyboard cursor" });
   await page.press("x");
   const oneSelected = await page.waitFor(
     "(document.querySelector('[class*=bulk]')?.innerText || '').replace(/\\s+/g,' ')",
@@ -153,7 +171,7 @@ export async function runChecks({ page, base, report, shot }) {
     });
     return 'created';
   `);
-  await page.goto(`${base}/documents`);
+  await openLibrary();
   check("a new collection appears in the sidebar", await page.eval("/quarterly review/i.test(document.querySelector('aside').innerText)"));
 
   const picked = await page.eval(`
@@ -162,6 +180,22 @@ export async function runChecks({ page, base, report, shot }) {
     return boxes.length;
   `);
   check("three documents can be selected", picked === 3);
+
+  // Wait for the selection to reach the sidebar rather than sleeping and hoping.
+  // Without this the drop below can fire before React has propagated it, which
+  // is a race that only shows up on a slower machine.
+  let dropScope;
+  try {
+    // Note the exact comparison: "0" is a truthy string, so polling the raw
+    // attribute would succeed immediately with no selection at all.
+    dropScope = await page.waitFor(
+      `document.querySelector('[data-drop-scope]')?.dataset.dropScope === '${picked}' ? '${picked}' : false`,
+      { label: "the selection to reach the sidebar" }
+    );
+  } catch {
+    dropScope = await page.eval("document.querySelector('[data-drop-scope]')?.dataset.dropScope ?? 'absent'");
+  }
+  check("the sidebar can see the selection", dropScope === String(picked), `data-drop-scope="${dropScope}"`);
 
   // The regression this pins: the sidebar could not see the library's selection,
   // so dragging a highlighted group filed exactly one document.
@@ -190,7 +224,7 @@ export async function runChecks({ page, base, report, shot }) {
 
   // --------------------------------------------------------------- deep links
   section("A document has a shareable address");
-  await page.goto(`${base}/documents`);
+  await openLibrary();
   const documentId = await page.eval("document.querySelector('[data-doc-id]').getAttribute('data-doc-id')");
   const expectedTitle = await page.eval(
     `document.querySelector('[data-doc-id="${documentId}"] .doc-card__title').innerText.trim()`
@@ -204,11 +238,20 @@ export async function runChecks({ page, base, report, shot }) {
     opened = false;
   }
   check("/documents/:id opens that document", opened, await page.eval("location.pathname"));
-  check(
-    "and it is the document the link names",
-    await page.eval(`(document.querySelector('.drawer__body')?.innerText || '').length > 0 && document.body.innerText.includes(${JSON.stringify(expectedTitle)})`),
-    expectedTitle
-  );
+
+  // Assert on the drawer's own heading, not on page text: the library behind the
+  // drawer also contains the title, so searching the whole body would pass even
+  // if the wrong document opened. The drawer renders before its detail request
+  // resolves, so this waits rather than reading a spinner.
+  let opened_title = "";
+  try {
+    opened_title = await page.waitFor("document.querySelector('.drawer__header h2')?.innerText.trim() || false", {
+      label: "the drawer to name the linked document",
+    });
+  } catch {
+    opened_title = "(never rendered)";
+  }
+  check("and it is the document the link names", opened_title === expectedTitle, `drawer heading: ${opened_title}`);
   await shot("08-deep-link");
   await page.press("Escape");
   await page.waitFor("location.pathname === '/documents'", { label: "the address bar to return to the library" });
@@ -219,7 +262,7 @@ export async function runChecks({ page, base, report, shot }) {
   // A fresh load: while a selection is active a click toggles selection rather
   // than opening the document, which is the behaviour we want but not the state
   // this section is testing.
-  await page.goto(`${base}/documents`);
+  await openLibrary();
   await page.click(`[data-doc-id="${documentId}"]`);
   await page.waitFor("Boolean(document.querySelector('.drawer__body'))", { label: "the document drawer" });
   await page.waitFor("[...document.querySelectorAll('[role=tab]')].some(t => /discussion/i.test(t.innerText))", {
@@ -238,7 +281,7 @@ export async function runChecks({ page, base, report, shot }) {
 
   // -------------------------------------------------------- live over the wire
   section("Live notifications over Server-Sent Events");
-  await page.goto(`${base}/documents`);
+  await openLibrary();
   const badgeBefore = await page.eval("document.querySelector('.notif-badge')?.innerText || 'none'");
   const navigationsBefore = await page.eval("performance.getEntriesByType('navigation').length");
   const triggered = await page.eval(`
@@ -279,7 +322,7 @@ export async function runChecks({ page, base, report, shot }) {
 
   // ------------------------------------------------------------ content search
   section("Search inside files");
-  await page.goto(`${base}/documents`);
+  await openLibrary();
   await page.fill("main input[type=search]", "truthy");
   await page.waitFor("document.querySelectorAll('article.doc-card').length === 0", {
     label: "the metadata search to come back empty",
@@ -304,7 +347,7 @@ export async function runChecks({ page, base, report, shot }) {
   section("Accessibility, motion and the offline shell");
   check("there is a skip link for keyboard users", await page.eval("Boolean([...document.querySelectorAll('a')].find(a => /skip/i.test(a.innerText)))"));
   await page.setReducedMotion(true);
-  await page.goto(`${base}/documents`);
+  await openLibrary();
   check(
     "with reduced motion every document still renders",
     (await page.eval("document.querySelectorAll('article.doc-card').length")) === 5
@@ -342,7 +385,7 @@ export async function runChecks({ page, base, report, shot }) {
   // ----------------------------------------------------------------- responsive
   section("Responsive layout");
   await page.setViewport(390, 844);
-  await page.goto(`${base}/documents`);
+  await openLibrary();
   check("the library renders on a phone viewport", (await page.eval("document.querySelectorAll('article.doc-card').length")) === 5);
   check(
     "with no horizontal overflow",

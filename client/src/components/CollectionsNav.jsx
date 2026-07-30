@@ -143,7 +143,11 @@ export default function CollectionsNav({ selectedIds, onFiled }) {
         <IconButton icon="plus" label="New collection" size={12} onClick={openCreate} style={{ width: 20, height: 20 }} />
       </div>
 
-      <div className="col gap-1">
+      {/* How many documents a drop here would apply to. Rendered because this
+          value crossing from the library into the shell is precisely what used
+          to be broken, and an invariant you cannot observe is one that breaks
+          again quietly. */}
+      <div className="col gap-1" data-drop-scope={selection.length}>
         {collections.map((collection) => (
           <div key={collection.id} className="row gap-1">
             <button

@@ -253,7 +253,7 @@ npm run build        # install + build the client
 npm run seed         # demo accounts and documents (safe to re-run)
 npm test             # unit tests (node:test, no test framework dependency)
 npm run verify       # 140-check end-to-end API suite against a throwaway database
-npm run verify:ui    # 48-check interface suite in a real headless browser
+npm run verify:ui    # 49-check interface suite in a real headless browser
 npm run check        # all three
 ```
 
@@ -283,6 +283,14 @@ It needs a Chrome or Chromium binary and finds one in the usual places; `CHROME_
 no browser installed it prints `Skipped` and exits `0`, so it is safe in a pipeline that has none —
 pass `--strict` to make a missing browser a failure instead. Screenshots of every step are written to
 `.verify-ui/screenshots`, and kept when something fails.
+
+**`UI_CPU_THROTTLE=20` slows the renderer down on purpose.** A CI runner is slower than a laptop, and
+a check that only passes on fast hardware is not a check — the first version of this suite waited for
+nothing and passed locally while failing in CI. Every step now waits for the state it depends on
+rather than sleeping, and the suite is verified at 1×, 8× and 20×. Where a wait needed something to
+observe, the app exposes it: the collections list carries `data-drop-scope`, the number of documents a
+drop would apply to, because a selection crossing from the library into the shell is exactly what used
+to break silently.
 
 There is no browser driver dependency: Node ships a `WebSocket`, and the DevTools Protocol's discovery
 endpoints are plain HTTP, so `scripts/ui/browser.mjs` is about 250 lines and the suite adds nothing to
