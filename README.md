@@ -10,15 +10,21 @@ React dashboard.
 
 Needs **Node 18.17+** and nothing else — no database to install, no `.env` to write.
 
-```bash
-git clone -b rebuild/full-stack-document-vault \
-  https://github.com/harshvardhan8058/document-sharing-management-system.git
-cd document-sharing-management-system
+Every command below is a single line, so it pastes cleanly into PowerShell, cmd, bash and zsh alike.
 
-npm run setup     # install server + client dependencies, build the interface
-npm run seed      # optional: demo accounts and five sample documents
-npm start         # then open http://localhost:4000
+```sh
+git clone -b rebuild/full-stack-document-vault https://github.com/harshvardhan8058/document-sharing-management-system.git
+cd document-sharing-management-system
+npm run setup
+npm run seed
+npm start
 ```
+
+| Step | What it does |
+| --- | --- |
+| `npm run setup` | Installs the server and client dependencies, then builds the interface. Takes a minute or two the first time. |
+| `npm run seed` | Optional. Creates the demo accounts and five sample documents. |
+| `npm start` | Serves the API and the built interface on **http://localhost:4000**. |
 
 Sign in with **`admin@dsms.dev`** / **`Admin@12345`** (admin) or `rio@dsms.dev` / `Member@12345`
 (member) to see sharing from the recipient's side. Without seeding, the first account you register
@@ -26,6 +32,25 @@ becomes the admin.
 
 Working on the interface? `npm run client:dev` gives you Vite with hot reload on `:5173`, proxying
 the API to `:4000` (keep `npm run dev` running in another terminal).
+
+<details>
+<summary><strong>If something goes wrong</strong></summary>
+
+**`npm error Missing script: "setup"`** — you are in the wrong directory. `npm` is reading a folder
+with no `package.json`. Check that `git clone` actually succeeded and that you have `cd`'d *into*
+`document-sharing-management-system`. `dir` (or `ls`) should show `package.json`, `server` and `client`.
+
+**`fatal: repository '\' does not exist`** — a `\` at the end of a line is a bash line-continuation
+and PowerShell does not understand it. Paste the clone command as one line.
+
+**`'git' is not recognized`** — install [Git](https://git-scm.com/downloads), then reopen the terminal.
+
+**Port 4000 already in use** — start it on another port:
+`$env:PORT=4100; npm start` in PowerShell, or `PORT=4100 npm start` in bash.
+
+**Check your Node version** with `node -v`. It must be 18.17 or newer; 20 or 22 is ideal.
+
+</details>
 
 Point it at a real database whenever you want — set `MONGODB_URI` and restart. Nothing else changes.
 See [Persistence](#persistence).
