@@ -107,6 +107,15 @@ try {
   const page = await Page.attach();
   await page.setViewport(1440, 900);
 
+  // Slow the renderer down on purpose to shake out races between a user action
+  // and the state it depends on. A CI runner is slower than a laptop, and a
+  // check that only passes on fast hardware is not a check.
+  const throttle = Number(process.env.UI_CPU_THROTTLE || 0);
+  if (throttle > 1) {
+    await page.send("Emulation.setCPUThrottlingRate", { rate: throttle });
+    console.log(`\u001b[2mCPU\u001b[0m     throttled ${throttle}x`);
+  }
+
   let shotIndex = 0;
   const shot = (name) => {
     shotIndex += 1;
