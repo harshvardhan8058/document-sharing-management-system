@@ -174,12 +174,17 @@ export async function runChecks({ page, base, report, shot }) {
   await openLibrary();
   check("a new collection appears in the sidebar", await page.eval("/quarterly review/i.test(document.querySelector('aside').innerText)"));
 
-  const picked = await page.eval(`
+  // Record which documents were selected, rather than assuming the first three
+  // checkboxes and the first card refer to the same documents.
+  const chosen = await page.eval(`
     const boxes = [...document.querySelectorAll('input[type=checkbox][aria-label^="Select "]')].slice(0, 3);
+    const ids = boxes.map((box) => box.closest('[data-doc-id]')?.getAttribute('data-doc-id'));
     boxes.forEach((box) => box.click());
-    return boxes.length;
+    return ids.join(',');
   `);
-  check("three documents can be selected", picked === 3);
+  const chosenIds = chosen.split(",").filter(Boolean);
+  const picked = chosenIds.length;
+  check("three documents can be selected", picked === 3, chosen);
 
   // Wait for the selection to reach the sidebar rather than sleeping and hoping.
   // Without this the drop below can fire before React has propagated it, which
@@ -199,16 +204,25 @@ export async function runChecks({ page, base, report, shot }) {
 
   // The regression this pins: the sidebar could not see the library's selection,
   // so dragging a highlighted group filed exactly one document.
-  await page.eval(`
-    const card = document.querySelector('article.doc-card');
+  //
+  // The dragged card is addressed by id, not by position. Dragging whichever card
+  // happens to be first only tests this if that card is one of the selected ones,
+  // and a failure would look like a product bug rather than a bad test.
+  const dragged = chosenIds[0];
+  const dropDiagnostics = await page.eval(`
+    const card = document.querySelector('[data-doc-id="${dragged}"]');
     const target = [...document.querySelectorAll('aside a, aside button, aside li')]
       .find((el) => /quarterly review/i.test(el.innerText || ''));
+    if (!card) return 'NO_CARD';
     if (!target) return 'NO_TARGET';
     const transfer = new DataTransfer();
     card.dispatchEvent(new DragEvent('dragstart', { dataTransfer: transfer, bubbles: true, cancelable: true }));
+    // What the card actually put on the drag, and what the sidebar can see.
+    const payload = transfer.getData('application/x-dsms-documents') || '(empty)';
+    const scope = document.querySelector('[data-drop-scope]')?.dataset.dropScope ?? 'absent';
     target.dispatchEvent(new DragEvent('dragover', { dataTransfer: transfer, bubbles: true, cancelable: true }));
     target.dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true }));
-    return 'dropped';
+    return 'payload=' + payload + ' scope=' + scope;
   `);
   const filed = await page.waitFor(
     `
@@ -219,7 +233,11 @@ export async function runChecks({ page, base, report, shot }) {
     `,
     { label: "the drop to be filed" }
   );
-  check("dragging one card of a three-document selection files all three", filed.startsWith("3/"), `filed/unfiled = ${filed}`);
+  check(
+    "dragging one card of a three-document selection files all three",
+    filed.startsWith("3/"),
+    `filed/unfiled = ${filed} · dragged ${dragged} · ${dropDiagnostics}`
+  );
   await shot("07-collections");
 
   // --------------------------------------------------------------- deep links
