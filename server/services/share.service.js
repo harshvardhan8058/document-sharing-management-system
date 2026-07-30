@@ -10,6 +10,7 @@ const access = require("./access.service");
 const activity = require("./activity.service");
 const authService = require("./auth.service");
 const storage = require("./storage.service");
+const notifications = require("./notification.service");
 
 const PERMISSIONS = ["view", "edit", "manage"];
 
@@ -135,6 +136,22 @@ async function shareWithUser({ id, user, body = {}, req, origin }) {
     detail: `${email} · ${permission}${expiresAt ? ` · expires ${expiresAt.slice(0, 10)}` : ""}`,
   });
 
+  // Tell the recipient. Someone who has not signed up yet cannot be notified,
+  // but the grant is already linked to their address and register() picks it up.
+  if (recipient) {
+    await notifications.notify({
+      userId: recipient.id,
+      type: "document.shared",
+      title: `${user.fullName} shared “${document.title}” with you`,
+      body:
+        permission === "view"
+          ? "You can view and download it."
+          : `You can ${permission} it.`,
+      document,
+      actor: user,
+    });
+  }
+
   return {
     share: presentShare(share, { origin }),
     recipientExists: Boolean(recipient),
@@ -225,6 +242,17 @@ async function revoke({ id, shareId, user, req }) {
     document,
     detail: share.type === "link" ? `token ${String(share.token).slice(0, 8)}…` : share.email,
   });
+
+  // Losing access silently is confusing — the document simply vanishes.
+  if (share.type === "user" && share.userId) {
+    await notifications.notify({
+      userId: share.userId,
+      type: "document.share_revoked",
+      title: `Your access to “${document.title}” was removed`,
+      body: `${user.fullName} revoked the share.`,
+      actor: user,
+    });
+  }
 
   return { revoked: true, id: shareId };
 }

@@ -1,8 +1,9 @@
 # Document Sharing & Management System
 
-A document vault with real authorization: upload and version files, share them with named
-people or through revocable public links, and audit every action. Express/MongoDB API,
-React dashboard.
+A document vault with real authorization: upload and version files, organise them into collections,
+search *inside* them, discuss them in threaded comments, and share them with named people or through
+revocable public links — with every action audited and every share notified live. Express/MongoDB API,
+React dashboard, no runtime dependencies on the client beyond React itself.
 
 ![Dashboard](docs/screenshots/02-dashboard.webp)
 
@@ -64,7 +65,10 @@ See [Persistence](#persistence).
 | **Sign in**<br>![Sign in](docs/screenshots/01-sign-in.webp) | **Library**<br>![Documents](docs/screenshots/03-documents.webp) |
 | **Document detail** — preview, versions, audit trail<br>![Document detail](docs/screenshots/04-document-detail.webp) | **Sharing** — links with password, expiry, download cap<br>![Sharing](docs/screenshots/05-sharing.webp) |
 | **Public link**, opened with no account<br>![Public link](docs/screenshots/06-public-link.webp) | **Audit trail** — who, when, from where<br>![Activity](docs/screenshots/08-activity.webp) |
-| **Instance health** — accounts, quotas, disk reconciliation<br>![Admin](docs/screenshots/07-admin.webp) | **Mobile**<br><img src="docs/screenshots/09-mobile.webp" width="240" alt="Mobile layout"> |
+| **Bulk selection** — act on many, with Undo<br>![Bulk selection](docs/screenshots/10-bulk-selection.webp) | **Discussion** — comments and `@mentions`<br>![Discussion](docs/screenshots/11-discussion.webp) |
+| **Quick Look** — `Space` to skim, `←`/`→` to browse<br>![Quick look](docs/screenshots/12-quicklook.webp) | **Search inside files** — with a matched excerpt<br>![Content search](docs/screenshots/13-content-search.webp) |
+| **Notifications**, pushed live over SSE<br>![Notifications](docs/screenshots/14-notifications.webp) | **Instance health** — quotas, disk reconciliation<br>![Admin](docs/screenshots/07-admin.webp) |
+| **Mobile**<br><img src="docs/screenshots/09-mobile.webp" width="240" alt="Mobile layout"> | |
 
 ---
 
@@ -74,6 +78,11 @@ See [Persistence](#persistence).
 | --- | --- |
 | **Accounts** | Registration, sign-in, profile, password rotation. JWT bearer tokens, scrypt password hashing. |
 | **Documents** | Upload with size, extension **and content** limits, metadata, tags, three visibility levels. |
+| **Collections** | Flat, user-owned grouping. Drag documents onto one in the sidebar. Deleting a collection never deletes its documents. |
+| **Search inside files** | Opt-in content search over indexed text, with a highlighted excerpt showing *why* each result matched. |
+| **Discussion** | Threaded comments with `@mentions`, one level of replies, author-only editing and manager moderation. |
+| **Notifications** | In-app, pushed live over Server-Sent Events. A share or a mention appears without a reload. |
+| **Bulk actions** | Select many documents and trash, restore, delete, star or file them — with **Undo** rather than a confirmation. |
 | **Versions** | Uploading a revision never overwrites history; any earlier version stays downloadable. |
 | **Sharing — people** | Grant `view` / `edit` / `manage` by email, with an optional expiry. Works before the recipient has an account. |
 | **Sharing — links** | Read-only anonymous links with optional password, expiry date and hard download cap. Revocable. |
@@ -86,10 +95,36 @@ See [Persistence](#persistence).
 
 ### The interface
 
-Dark "Nebula" theme by default with a light "Daybreak" alternative, glassmorphism panels over an
-animated aurora backdrop. Grid and list layouts, drag-and-drop upload anywhere on the page with
-per-file progress, a document detail drawer with inline preview (images, PDF, text), a
-`Ctrl/⌘ K` command palette, faceted filtering, and toast notifications.
+Dark "Nebula" theme by default with a light "Daybreak" alternative: glassmorphism panels over an
+animated aurora backdrop that parallaxes with the pointer, cards that catch a spotlight and lean
+slightly away from the cursor, metrics that count up so a refresh is legible, and cross-faded route
+changes via the View Transitions API.
+
+Grid and list layouts, drag-and-drop upload anywhere on the page (or `⌘/Ctrl V` to upload straight
+from the clipboard), a document drawer with inline preview and discussion, a `⌘/Ctrl K` command
+palette, faceted filtering, and an installable offline shell.
+
+It is keyboard-first. Arrow keys move a cursor through the grid, `Space` opens a Quick Look preview
+you can browse with `←`/`→`, `Enter` opens full details, `X` adds to a selection and `⌘/Ctrl A`
+selects the page.
+
+Every animation is wrapped in a `prefers-reduced-motion` check and collapses to its final state —
+motion is decoration, and the interface is complete without it.
+
+| Key | |
+| --- | --- |
+| `⌘/Ctrl K` | Command palette — navigate, search, switch theme, upload |
+| `/` | Focus search |
+| `U` | Upload |
+| `⌘/Ctrl V` | Upload whatever is on the clipboard |
+| `←` `→` `↑` `↓` | Move the cursor through the library |
+| `Space` | Quick Look (then `←`/`→` to move between documents) |
+| `Enter` | Open full details |
+| `X` · `⌘/Ctrl A` · `Esc` | Add to selection · select the page · clear |
+| `⌘/Ctrl Enter` | Post a comment |
+
+Shortcuts are suppressed while you are typing in a field, so `/` and `X` stay ordinary characters
+where they should be.
 
 Keyboard: `⌘/Ctrl K` command palette · `/` focus search · `U` upload · `Esc` close.
 
@@ -133,6 +168,10 @@ Copy `.env.example` to `.env`. Every value has a working default.
 | `MAX_UPLOAD_MB` | `25` | |
 | `STORAGE_QUOTA_GB` | `2` | Per-account allowance. `0` disables the limit. |
 | `ALLOWED_EXTENSIONS` | see `.env.example` | Empty means "allow anything". |
+| `SEARCH_SNIPPET_KB` | `16` | Text kept per document for in-content search. |
+| `SSE_TICKET_TTL_SECONDS` | `30` | Lifetime of a single-use live-stream ticket. |
+| `SSE_HEARTBEAT_SECONDS` | `25` | Keep-alive frames, so idle proxies don't close the stream. |
+| `SSE_MAX_CONNECTIONS_PER_USER` | `6` | Concurrent streams per account; oldest is dropped. |
 | `TRUST_PROXY` | `false` | **Leave off unless a proxy really is in front.** See below. |
 | `RATE_LIMIT_MAX` | `600` / 15 min | Downloads and previews are exempt. |
 | `AUTH_RATE_LIMIT_MAX` | `40` / 15 min | Credential endpoints only. |
@@ -169,16 +208,24 @@ server/
     mongoose/         schemas + repository adapter
   services/           all business logic
     access.service.js the single authority on "who may do what to this document"
+    events.service.js  SSE hub — subscriber registry, heartbeats, single-use stream tickets
+    notification.service.js  writes a row per recipient, then pushes it down the stream
+    collection.service.js · comment.service.js · maintenance.service.js
   controllers/        thin HTTP translation over the services
   routes/             routing + express-validator chains
   middleware/         auth, upload, validation, request log, error handler
   utils/              ApiError, tokens, password hashing, file helpers, pagination
 client/
+  public/             installable shell: manifest, service worker, icons
   src/lib/            api client, router, formatters, icon set
+    useMotion.js      spotlight/tilt/parallax/count-up hooks, each gated on reduced-motion
+    useSelection.js   multi-select with a keyboard cursor and shift-range
+    useEventStream.js EventSource lifecycle: ticket exchange, backoff, resubscribe
   src/context/        theme, toasts, auth session, workspace state
   src/components/     design-system primitives and feature components
+    QuickLook.jsx · BulkBar.jsx · CollectionsNav.jsx · CommentsPanel.jsx · NotificationCenter.jsx
   src/pages/          one file per route
-  src/styles/         design tokens, base, layout, components, utilities
+  src/styles/         design tokens, base, layout, components, motion, utilities
 scripts/
   seed.js             demo data
   verify-api.js       end-to-end API verification (both drivers)
@@ -203,7 +250,7 @@ npm run client:dev   # Vite dev server on :5173, proxying /api to :4000
 npm run build        # install + build the client
 npm run seed         # demo accounts and documents (safe to re-run)
 npm test             # unit tests (node:test, no test framework dependency)
-npm run verify       # 111-check end-to-end API suite against a throwaway database
+npm run verify       # 140-check end-to-end API suite against a throwaway database
 npm run check        # both of the above
 ```
 
@@ -218,7 +265,7 @@ the first failure.
 DB_DRIVER=mongo MONGODB_URI=mongodb://127.0.0.1:27017 npm run verify
 ```
 
-Both driver paths are exercised in CI, and both currently pass 111/111.
+Both driver paths are exercised in CI, and both currently pass 140/140.
 
 `npm test` covers the parts where a subtle mistake is expensive and invisible: the query dialect
 the two drivers share, scrypt hashing, magic-byte inspection, the compare-and-swap primitive behind
@@ -276,6 +323,44 @@ you are sitting at stays signed in. A token rejected this way reports `TOKEN_REV
 
 Link failures carry distinct codes so a client can explain itself: `LINK_NOT_FOUND`,
 `LINK_REVOKED`, `LINK_EXPIRED`, `LINK_EXHAUSTED`, `LINK_PASSWORD_REQUIRED`, `LINK_PASSWORD_INVALID`.
+
+### Collections
+| | |
+| --- | --- |
+| `GET  /api/collections` | Your collections with live document counts, plus the unfiled total. |
+| `POST /api/collections` | `{ name, color?, icon?, description? }`. |
+| `PATCH /api/collections/:id` | Rename, recolour, reorder. |
+| `DELETE /api/collections/:id` | Delete. **Documents are unfiled, never deleted.** |
+| `POST /api/collections/:id/documents` | `{ documentIds }` — file them. |
+| `POST /api/collections/unfile` | `{ documentIds }` — clear their collection. |
+
+A collection is a **view, not a grant**. Filing a document you can see changes nothing about who may
+read it, and a collection's owner gains no rights over what is inside.
+
+### Discussion
+| | |
+| --- | --- |
+| `GET  /api/documents/:id/comments` | Threaded comments (one level of replies). |
+| `POST /api/documents/:id/comments` | `{ body, parentId? }`. Reports handles that matched nobody. |
+| `PATCH /api/documents/:id/comments/:commentId` | Author only. |
+| `DELETE /api/documents/:id/comments/:commentId` | Author, or a document manager (moderation). |
+
+Reading and commenting both need only `view` access — a reviewer with read-only access still needs to
+be able to say "this section is wrong".
+
+### Notifications & live updates
+| | |
+| --- | --- |
+| `GET  /api/notifications` | List with an unread count. |
+| `GET  /api/notifications/unread-count` | Just the badge number. |
+| `POST /api/notifications/:id/read` · `/read-all` | Mark read. |
+| `DELETE /api/notifications/read` | Clear the ones already read. |
+| `POST /api/notifications/stream/ticket` | Single-use ticket for the stream. |
+| `GET  /api/notifications/stream?ticket=` | **SSE**: notifications and comment events. |
+
+`EventSource` cannot send an `Authorization` header. Rather than put the bearer token in the URL —
+where it would land in access logs, proxy logs and browser history — the client swaps it for a ticket
+that is **single-use and valid for seconds**. That is what appears in the stream URL.
 
 ### Insights
 | | |
@@ -375,6 +460,19 @@ Three more surfaced while writing the tests — a client password rule missing t
 trap that captured its container element once and so pointed at a detached node after the panel
 finished loading, silently swallowing every Tab press.
 
+### And three while building collaboration
+
+1. **The server stopped logging "graceful shutdown timed out" — because it never was graceful.** An
+   open SSE connection is a socket the server is deliberately holding forever, so `server.close()`
+   waited on it until the timeout fired and killed the process. Shutdown now closes every stream
+   first. Easy to miss: the exit code was still `0`.
+2. **Undo restored the wrong thing.** The bulk handler passed the *action* where the toast expected a
+   callback, so undoing a bulk trash silently did nothing while still reporting success.
+3. **The verification suite passed a test it should have failed.** The collaboration checks reused a
+   token that an earlier deactivation check had already revoked, and read the resulting `401` as the
+   expected "no access". It now re-authenticates, which is how the missing notification-on-revoke was
+   found.
+
 ---
 
 ## Notes on a few decisions
@@ -405,6 +503,35 @@ would only reject valid files.
 refuses to start in production without an explicit `JWT_SECRET`. Configuration you have to remember
 to harden is configuration that ships unhardened.
 
+**Live updates use SSE, not WebSockets.** Every message here travels server→client, which is exactly
+what Server-Sent Events are for: they ride plain HTTP, need no upgrade handshake to survive a proxy,
+and the browser reconnects on its own. A WebSocket would have bought bidirectionality nobody needed.
+
+**A collection is a view, not a grant.** Filing a document changes nothing about who can read it, and
+owning a collection gives you no rights over its contents. Collections are also flat: nesting sounds
+free until you have to define whether a permission, a move or a delete applies to a whole subtree.
+
+**Bulk actions report per-item outcomes.** Acting on twenty documents where three are forbidden
+returns `200` with a `failed[]` array rather than one blunt verdict, so the UI can say what actually
+happened. Only a *total* failure is an error status — a bulk call that changed nothing must never look
+like a success. Reversible bulk actions offer **Undo** afterwards instead of a confirmation dialog
+first: a prompt on every action trains people to dismiss prompts.
+
+**The download cap is claimed before the file is sent, not counted after.** A post-stream increment
+loses updates under concurrency — ten parallel requests against a cap of ten recorded three in
+testing, and a "max 1 download" link served several. The counter is now claimed with an atomic
+compare-and-swap before a single byte moves, so an abandoned transfer spends its slot. That is the
+correct trade for a limit that exists to be enforced.
+
+**Duplicate detection happens in the browser.** The client hashes a file with SubtleCrypto before
+uploading and asks whether that hash already exists *in your own documents* — never globally, which
+would let anyone test whether a given file exists in someone else's account. It warns; it does not
+block, because a second copy is sometimes exactly what you meant.
+
+**The service worker never caches `/api`.** Every response there is access-controlled and specific to
+one token, so a cache would be a way to serve one person's documents to the next. Only the static
+shell is cached, and only in production builds.
+
 ---
 
 ## Known limitations
@@ -424,6 +551,20 @@ real answer behind more than one instance.
 they register, and pending grants are linked to the new account automatically — but nobody is
 *notified*. For the same reason there is no password-reset flow; an admin changing a quota or role
 is the only out-of-band recovery path.
+
+**The live stream is in-process.** Subscribers are held in one server's memory, so behind two replicas
+a user connected to node A never hears about an event raised on node B. The *notification itself* is
+persisted either way, so it still appears on the next poll or reload — only the push is lost. A shared
+bus (Redis pub/sub) is the fix, and the hub is deliberately small enough to swap.
+
+**Content search only indexes the beginning of a file.** Up to `SEARCH_SNIPPET_KB` (16 KB by default)
+of extracted text is stored per document, so a match late in a long file will not be found. Only
+text-ish formats are indexed at all: PDF and `.docx` are compressed containers and would need a real
+parser, so searching inside them finds nothing. Titles, tags and descriptions are always searched.
+
+**No onboarding tour.** The keyboard model is documented here and in the command palette, but the
+interface does not teach it — a first-time user will reach for the mouse and never discover that
+`Space` opens a preview.
 
 **The local driver is single-process.** It keeps every record in memory, scans linearly, and rewrites
 whole files. A pid lock makes a second process refuse to start rather than silently corrupt the

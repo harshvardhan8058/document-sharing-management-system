@@ -5,6 +5,7 @@ const logger = require("./utils/logger");
 const { connect, disconnect, flushSync } = require("./data");
 const storage = require("./services/storage.service");
 const maintenance = require("./services/maintenance.service");
+const events = require("./services/events.service");
 const createApp = require("./app");
 const { formatBytes } = require("./utils/files");
 
@@ -62,6 +63,16 @@ function installShutdownHandlers(server, stopMaintenance = () => {}) {
     shuttingDown = true;
     logger.info(`${signal} received — shutting down`);
     stopMaintenance();
+
+    /**
+     * Close the event streams first.
+     *
+     * `server.close()` waits for open connections to finish, and an SSE stream
+     * never finishes on its own — so without this the shutdown always hit the
+     * force-exit timeout. Clients see a `shutdown` frame and reconnect to the
+     * replacement process.
+     */
+    events.closeAll();
 
     const force = setTimeout(() => {
       logger.error("Graceful shutdown timed out — forcing exit");

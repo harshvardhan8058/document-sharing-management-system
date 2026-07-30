@@ -2,13 +2,59 @@ import FileGlyph from "./FileGlyph";
 import { Badge, Chip, IconButton } from "./ui";
 import { Icon } from "../lib/icons";
 import { relativeTime, visibilityLabel, formatNumber } from "../lib/format";
+import { usePointerSpotlight } from "../lib/useMotion";
+
+/**
+ * Highlight the matched term inside a content snippet.
+ *
+ * Built from split() rather than by injecting HTML — the term comes from user
+ * input, and interpolating it into markup would be an XSS hole for the sake of
+ * a bold substring.
+ */
+function HighlightedSnippet({ text, term }) {
+  if (!text) return null;
+  if (!term) return <span>{text}</span>;
+
+  const parts = String(text).split(new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "ig"));
+
+  return (
+    <span>
+      {parts.map((part, index) =>
+        part.toLowerCase() === term.toLowerCase() ? (
+          <mark key={index} className="snippet-hit">
+            {part}
+          </mark>
+        ) : (
+          <span key={index}>{part}</span>
+        )
+      )}
+    </span>
+  );
+}
 
 /** Visibility badge tone, shared by both layouts. */
 const visibilityTone = (visibility) =>
   ({ private: "private", internal: "internal", public: "public" })[visibility] || "private";
 
 /** Card layout — the default grid view. */
-export function DocumentCard({ document: doc, index = 0, onOpen, onToggleStar, onDownload, onShare }) {
+export function DocumentCard({
+  document: doc,
+  index = 0,
+  onOpen,
+  onToggleStar,
+  onDownload,
+  onShare,
+  selected = false,
+  selectionMode = false,
+  onToggleSelect,
+  onDragStart,
+  onDragEnd,
+  matchSnippet,
+  focused = false,
+}) {
+  // Pointer-tracked glow and a gentle lean away from the cursor.
+  const spotlightRef = usePointerSpotlight({ tilt: 3 });
+
   const stop = (handler) => (event) => {
     event.stopPropagation();
     handler?.();
@@ -16,9 +62,35 @@ export function DocumentCard({ document: doc, index = 0, onOpen, onToggleStar, o
 
   return (
     <article
-      className="panel doc-card"
-      style={{ animationDelay: `${Math.min(index, 12) * 32}ms` }}
-      onClick={() => onOpen?.(doc)}
+      ref={spotlightRef}
+      className={`panel doc-card spotlight spotlight-edge tilt selectable stagger-in drag-source ${
+        selected ? "selected" : ""
+      } ${focused ? "card-focused" : ""}`}
+      style={{ "--i": index }}
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = "move";
+        // Plain text so a drop outside the app degrades to the title.
+        event.dataTransfer.setData("text/plain", doc.title);
+        event.dataTransfer.setData("application/x-dsms-documents", JSON.stringify([doc.id]));
+        event.currentTarget.classList.add("dragging");
+        onDragStart?.(doc);
+      }}
+      onDragEnd={(event) => {
+        event.currentTarget.classList.remove("dragging");
+        onDragEnd?.(doc);
+      }}
+      data-doc-id={doc.id}
+      onClick={(event) => {
+        // Cmd/Ctrl-click adds to a selection instead of opening — the standard
+        // file-manager gesture.
+        if (selectionMode || event.metaKey || event.ctrlKey) {
+          event.preventDefault();
+          onToggleSelect?.(doc);
+          return;
+        }
+        onOpen?.(doc);
+      }}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
@@ -29,6 +101,20 @@ export function DocumentCard({ document: doc, index = 0, onOpen, onToggleStar, o
       tabIndex={0}
       aria-label={`Open ${doc.title}`}
     >
+      {/* Selection checkbox: always present for keyboard and screen-reader use,
+          visually revealed on hover or once a selection exists. */}
+      <label
+        className={`doc-card__select ${selected || selectionMode ? "doc-card__select--shown" : ""}`}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={() => onToggleSelect?.(doc)}
+          aria-label={`Select ${doc.title}`}
+        />
+      </label>
+
       <button
         type="button"
         className={`doc-card__star ${doc.isStarred ? "doc-card__star--on" : ""}`}
@@ -57,7 +143,16 @@ export function DocumentCard({ document: doc, index = 0, onOpen, onToggleStar, o
         </div>
       </div>
 
-      {doc.description ? <p className="doc-card__desc">{doc.description}</p> : null}
+      {/* A content match earns its own line: it explains *why* this result is
+          here, which a title-only list cannot. */}
+      {matchSnippet ? (
+        <p className="doc-card__snippet">
+          <Icon name="search" size={11} />{" "}
+          <HighlightedSnippet text={matchSnippet.text} term={matchSnippet.term} />
+        </p>
+      ) : doc.description ? (
+        <p className="doc-card__desc">{doc.description}</p>
+      ) : null}
 
       {doc.tags?.length ? (
         <div className="row wrap gap-2">

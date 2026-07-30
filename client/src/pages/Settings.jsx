@@ -378,7 +378,13 @@ export default function Settings() {
                 { keys: [modifierKeyLabel(), "K"], label: "Command palette" },
                 { keys: ["/"], label: "Focus search" },
                 { keys: ["U"], label: "Open the uploader" },
-                { keys: ["Esc"], label: "Close a dialog or panel" },
+                { keys: ["←", "→", "↑", "↓"], label: "Move through documents" },
+                { keys: ["Space"], label: "Quick look at the focused document" },
+                { keys: ["↵"], label: "Open full details" },
+                { keys: ["X"], label: "Add the focused document to the selection" },
+                { keys: [modifierKeyLabel(), "A"], label: "Select everything on the page" },
+                { keys: [modifierKeyLabel(), "V"], label: "Paste a file to upload it" },
+                { keys: ["Esc"], label: "Clear a selection, or close a panel" },
               ].map((shortcut) => (
                 <div key={shortcut.label} className="row between gap-3">
                   <span className="muted">{shortcut.label}</span>

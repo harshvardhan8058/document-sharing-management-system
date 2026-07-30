@@ -125,6 +125,42 @@ async function assertContentMatchesExtension(file) {
   });
 }
 
+/**
+ * Extract a bounded, lower-cased slice of a text file for in-content search.
+ *
+ * Only text-ish formats are read: a PDF or a .docx is a container, and pulling
+ * words out of one needs a real parser rather than a byte slice, so pretending
+ * otherwise would index binary noise.
+ *
+ * Returns `null` when the file is not searchable, so the caller can store an
+ * empty snippet rather than a misleading one.
+ */
+async function extractSearchSnippet({ absolutePath, mimeType, extension }) {
+  const searchable =
+    /^text\//.test(mimeType || "") ||
+    ["application/json", "application/xml", "application/rtf"].includes(mimeType) ||
+    ["txt", "md", "csv", "json", "xml", "yml", "yaml", "log", "rtf"].includes(extension || "");
+
+  if (!searchable) return null;
+
+  try {
+    const limit = config.search.snippetBytes;
+    const buffer = await readHead(absolutePath, limit + 1);
+
+    const truncated = buffer.length > limit;
+    const text = buffer.subarray(0, limit).toString("utf8");
+
+    return {
+      // Collapse whitespace so a phrase split across lines still matches.
+      snippet: text.replace(/\s+/g, " ").trim().toLowerCase(),
+      truncated,
+    };
+  } catch (err) {
+    logger.warn(`Could not index "${absolutePath}" for search: ${err.message}`);
+    return null;
+  }
+}
+
 /** Read a text file with a hard cap, used for inline text previews. */
 async function readTextPreview(storedName, maxBytes = 128 * 1024) {
   const handle = await fsp.open(pathFor(storedName), "r");
@@ -185,6 +221,7 @@ module.exports = {
   removeFiles,
   readHead,
   assertContentMatchesExtension,
+  extractSearchSnippet,
   readTextPreview,
   usageOnDisk,
   listStoredFiles,

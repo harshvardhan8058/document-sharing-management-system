@@ -43,6 +43,35 @@ export default function UploadDialog({ open, onClose, onUploaded, limits, initia
     setBusy(false);
   }, []);
 
+  /**
+   * Hash a file in the browser and ask whether it has been uploaded before.
+   *
+   * SubtleCrypto needs a secure context, so this is skipped over plain HTTP
+   * (localhost counts as secure). A failure here is silent — duplicate detection
+   * is an aid, and it must never block an upload.
+   */
+  const checkForDuplicate = useCallback(async (item) => {
+    if (!window.crypto?.subtle) return;
+    // Hashing a very large file in one go would block; the warning is not worth it.
+    if (item.file.size > 64 * 1024 * 1024) return;
+
+    try {
+      const digest = await window.crypto.subtle.digest("SHA-256", await item.file.arrayBuffer());
+      const checksum = Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("");
+
+      const result = await api.documents.duplicateCheck(checksum);
+      if (!result.duplicate) return;
+
+      setQueue((current) =>
+        current.map((entry) => (entry.id === item.id ? { ...entry, duplicateOf: result.document } : entry))
+      );
+    } catch {
+      /* best effort */
+    }
+  }, []);
+
   /** Validate locally so obvious problems surface before a round trip. */
   const describeProblem = useCallback(
     (file) => {
@@ -58,21 +87,29 @@ export default function UploadDialog({ open, onClose, onUploaded, limits, initia
 
   const addFiles = useCallback(
     (files) => {
+      const additions = files.map((file) => ({
+        id: `${file.name}-${file.size}-${Math.random().toString(36).slice(2, 7)}`,
+        file,
+        progress: 0,
+        status: describeProblem(file) ? "invalid" : "pending",
+        error: describeProblem(file),
+        duplicateOf: null,
+      }));
+
       setQueue((current) => {
         const existing = new Set(current.map((item) => `${item.file.name}:${item.file.size}`));
-        const additions = files
-          .filter((file) => !existing.has(`${file.name}:${file.size}`))
-          .map((file) => ({
-            id: `${file.name}-${file.size}-${Math.random().toString(36).slice(2, 7)}`,
-            file,
-            progress: 0,
-            status: describeProblem(file) ? "invalid" : "pending",
-            error: describeProblem(file),
-          }));
-        return [...current, ...additions];
+        return [...current, ...additions.filter((item) => !existing.has(`${item.file.name}:${item.file.size}`))];
       });
+
+      // Hash locally and ask the server whether these bytes are already stored.
+      // Doing it before the upload means a duplicate costs one small request
+      // instead of the whole file.
+      for (const item of additions) {
+        if (item.status === "invalid") continue;
+        checkForDuplicate(item);
+      }
     },
-    [describeProblem]
+    [describeProblem, checkForDuplicate]
   );
 
   // Files handed in from a window-level drop open the dialog pre-filled.
@@ -257,6 +294,16 @@ export default function UploadDialog({ open, onClose, onUploaded, limits, initia
                 ) : null}
 
                 {item.error ? <div className="text-xs danger mt-1">{item.error}</div> : null}
+
+                {/* A warning, not a block: re-uploading the same bytes is
+                    sometimes exactly what you meant to do. */}
+                {item.duplicateOf ? (
+                  <div className="text-xs warning mt-1 row gap-1 wrap">
+                    <Icon name="alert" size={11} />
+                    Identical to “{item.duplicateOf.title}”
+                    {item.duplicateOf.status === "trashed" ? " (in your trash)" : ""} — upload anyway?
+                  </div>
+                ) : null}
               </div>
 
               {item.status === "done" ? (

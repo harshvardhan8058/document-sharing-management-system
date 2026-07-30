@@ -1,0 +1,317 @@
+/* ==========================================================================
+   Motion layer
+   Pointer spotlights, tilt, reveals, view transitions and the interactions that
+   make the interface feel physical. Everything here is opt-out under
+   prefers-reduced-motion — see the block at the end of the file.
+   ========================================================================== */
+
+/* -- pointer spotlight ---------------------------------------------------- */
+
+/* A radial highlight that follows the cursor, positioned from the --px/--py
+   custom properties written by usePointerSpotlight. Sits above the panel
+   background but below its content. */
+.spotlight {
+  position: relative;
+  isolation: isolate;
+}
+
+.spotlight::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-base) var(--ease-out);
+  background: radial-gradient(
+    340px circle at var(--px, 50%) var(--py, 50%),
+    rgba(103, 232, 249, 0.13),
+    rgba(168, 85, 247, 0.07) 40%,
+    transparent 68%
+  );
+}
+
+.spotlight:hover::after,
+.spotlight:focus-within::after {
+  opacity: 1;
+}
+
+/* Keep real content above the highlight. */
+.spotlight > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* A hairline that brightens along the cursor edge — reads as light catching a
+   bevel. Drawn with a masked border via two stacked gradients. */
+.spotlight-edge::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--t-base) var(--ease-out);
+  background: radial-gradient(
+    260px circle at var(--px, 50%) var(--py, 50%),
+    rgba(103, 232, 249, 0.75),
+    transparent 70%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.spotlight-edge:hover::before,
+.spotlight-edge:focus-within::before {
+  opacity: 1;
+}
+
+/* -- 3D tilt -------------------------------------------------------------- */
+
+.tilt {
+  transform: perspective(900px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg));
+  transform-style: preserve-3d;
+  transition: transform var(--t-base) var(--ease-out), box-shadow var(--t-base) var(--ease-out);
+  will-change: transform;
+}
+
+.tilt:hover {
+  /* Lift on the z-axis so the tilt has something to rotate about. */
+  transform: perspective(900px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg)) translateZ(6px);
+}
+
+/* -- scroll reveal -------------------------------------------------------- */
+
+.reveal {
+  opacity: 0;
+  transform: translateY(18px) scale(0.985);
+  transition:
+    opacity var(--t-slow) var(--ease-out),
+    transform var(--t-slow) var(--ease-out);
+}
+
+.reveal--in {
+  opacity: 1;
+  transform: none;
+}
+
+/* -- view transitions ----------------------------------------------------- */
+
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root) {
+    animation: vt-out 180ms var(--ease-out) both;
+  }
+
+  ::view-transition-new(root) {
+    animation: vt-in 260ms var(--ease-out) both;
+  }
+}
+
+@keyframes vt-out {
+  to { opacity: 0; transform: translateY(-6px) scale(0.995); }
+}
+
+@keyframes vt-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.995); }
+}
+
+/* -- press feedback ------------------------------------------------------- */
+
+/* A subtle scale on activation. Cheaper and calmer than a ripple, and it works
+   for keyboard activation too. */
+.pressable {
+  transition: transform var(--t-fast) var(--ease-out), filter var(--t-fast) var(--ease-out);
+}
+
+.pressable:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* -- attention pulse ------------------------------------------------------ */
+
+.pulse-once {
+  animation: pulse-glow 700ms var(--ease-out);
+}
+
+@keyframes pulse-glow {
+  0% { box-shadow: 0 0 0 0 rgba(103, 232, 249, 0.5); }
+  60% { box-shadow: 0 0 0 10px rgba(103, 232, 249, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(103, 232, 249, 0); }
+}
+
+/* A number that just changed. */
+.value-flash {
+  animation: value-flash 600ms var(--ease-out);
+}
+
+@keyframes value-flash {
+  0% { color: var(--cyan); transform: translateY(-2px); }
+  100% { color: inherit; transform: none; }
+}
+
+/* -- live indicator ------------------------------------------------------- */
+
+.live-dot {
+  position: relative;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--mint);
+}
+
+.live-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: inherit;
+  animation: live-ping 2s var(--ease-out) infinite;
+}
+
+.live-dot--off {
+  background: var(--text-dim);
+}
+
+.live-dot--off::after {
+  animation: none;
+}
+
+@keyframes live-ping {
+  0% { transform: scale(1); opacity: 0.7; }
+  70% { transform: scale(2.6); opacity: 0; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* -- shimmer sweep on gradient text -------------------------------------- */
+
+.shimmer-text {
+  background: linear-gradient(
+    100deg,
+    var(--text) 20%,
+    var(--cyan) 40%,
+    var(--violet) 55%,
+    var(--text) 75%
+  );
+  background-size: 220% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer-slide 7s linear infinite;
+}
+
+@keyframes shimmer-slide {
+  to { background-position: -220% center; }
+}
+
+/* -- drag affordances ----------------------------------------------------- */
+
+.drag-source {
+  cursor: grab;
+}
+
+.drag-source:active {
+  cursor: grabbing;
+}
+
+/* A collection in the sidebar that a document is hovering over. */
+.drop-target--over {
+  background: rgba(103, 232, 249, 0.14) !important;
+  outline: 1.5px dashed var(--accent);
+  outline-offset: -3px;
+}
+
+/* A card being dragged. */
+.dragging {
+  opacity: 0.45;
+  transform: scale(0.97);
+}
+
+/* -- selection ------------------------------------------------------------ */
+
+.selectable {
+  transition: box-shadow var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out);
+}
+
+.selected {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 1.5px var(--accent), var(--shadow-md) !important;
+}
+
+/* -- stagger -------------------------------------------------------------- */
+
+/* Entry delay driven by an inline --i index, capped so a large page does not
+   take a visible age to finish appearing. */
+.stagger-in {
+  animation: fade-up var(--t-base) var(--ease-out) backwards;
+  animation-delay: calc(min(var(--i, 0), 14) * 34ms);
+}
+
+/* ==========================================================================
+   Reduced motion: keep every final state, drop every animation.
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .tilt,
+  .tilt:hover {
+    transform: none;
+  }
+
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .pressable:active:not(:disabled) {
+    transform: none;
+  }
+
+  .pulse-once,
+  .value-flash,
+  .shimmer-text,
+  .stagger-in,
+  .live-dot::after {
+    animation: none;
+  }
+
+  .shimmer-text {
+    background: var(--grad-text);
+    -webkit-background-clip: text;
+    background-clip: text;
+  }
+
+  .spotlight::after,
+  .spotlight-edge::before {
+    transition: none;
+  }
+}
+
+
+/* Bars are buttons now (hover + keyboard focus), so reset button chrome. */
+.bars__col {
+  appearance: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.bars__col:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+
+/* The card under the keyboard cursor. Distinct from :focus-visible because the
+   cursor is app state, not DOM focus. */
+.card-focused {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px rgba(103, 232, 249, 0.35), var(--shadow-lg) !important;
+}

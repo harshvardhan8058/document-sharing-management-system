@@ -17,6 +17,7 @@ import {
 } from "./ui";
 import FileGlyph from "./FileGlyph";
 import DocumentPreview from "./DocumentPreview";
+import CommentsPanel from "./CommentsPanel";
 import { Icon } from "../lib/icons";
 import { api } from "../lib/api";
 import { useToast } from "../context/ToastContext";
@@ -263,6 +264,7 @@ export default function DocumentDrawer({ documentId, onClose, onChanged, onShare
             tabs={[
               { value: "overview", label: "Overview" },
               { value: "preview", label: "Preview" },
+              { value: "comments", label: "Discussion" },
               { value: "versions", label: "Versions", count: detail.versions.length },
               { value: "activity", label: "Activity" },
             ]}
@@ -401,6 +403,10 @@ export default function DocumentDrawer({ documentId, onClose, onChanged, onShare
 
           {tab === "preview" ? (
             <DocumentPreview document={doc} version={selectedVersion} />
+          ) : null}
+
+          {tab === "comments" ? (
+            <CommentsPanel documentId={doc.id} canModerate={doc.permissions.canManage} />
           ) : null}
 
           {tab === "versions" ? (
