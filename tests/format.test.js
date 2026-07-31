@@ -68,3 +68,39 @@ test("nonsense input degrades to zero instead of NaN", () => {
   // A broken animation frame falls back to the real value.
   assert.equal(formatUsagePercent(42, Number.NaN), "42%");
 });
+
+
+test("what counts as a text document is decided in one place", () => {
+  const { isTextDocument } = format;
+
+  /*
+   * The preview and version comparison both ask this question. They used to ask
+   * it separately — the preview with its own regex — which left them free to
+   * disagree: a file could render as text and then refuse to diff.
+   */
+  const doc = (mimeType) => ({ file: { mimeType } });
+
+  assert.equal(isTextDocument(doc("text/plain")), true);
+  assert.equal(isTextDocument(doc("text/markdown")), true);
+  assert.equal(isTextDocument(doc("text/csv")), true);
+  // Text that browsers label as application/*.
+  assert.equal(isTextDocument(doc("application/json")), true);
+  assert.equal(isTextDocument(doc("application/xml")), true);
+  assert.equal(isTextDocument(doc("image/svg+xml")), true, "SVG is XML, and readable as text");
+
+  assert.equal(isTextDocument(doc("application/pdf")), false);
+  assert.equal(isTextDocument(doc("image/png")), false);
+  assert.equal(isTextDocument(doc("application/zip")), false);
+  // A .docx is a zip container, not text, however much it holds words.
+  assert.equal(
+    isTextDocument(doc("application/vnd.openxmlformats-officedocument.wordprocessingml.document")),
+    false
+  );
+
+  // Missing or malformed input must answer "no", not throw.
+  assert.equal(isTextDocument(undefined), false);
+  assert.equal(isTextDocument({}), false);
+  assert.equal(isTextDocument({ file: {} }), false);
+  // Accepts a bare shape too, since some call sites hold the file, not the document.
+  assert.equal(isTextDocument({ mimeType: "text/plain" }), true);
+});

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Alert, Button, Spinner } from "./ui";
 import { Icon } from "../lib/icons";
 import { api } from "../lib/api";
+import { isTextDocument } from "../lib/format";
 
 /**
  * Inline preview.
@@ -14,10 +15,11 @@ import { api } from "../lib/api";
 export default function DocumentPreview({ document: doc, version, publicToken, publicPassword }) {
   const [state, setState] = useState({ status: "loading" });
 
-  const mimeType = doc.file.mimeType;
+  const mimeType = doc.file.mimeType || "";
   const isImage = /^image\/(png|jpeg|gif|webp|bmp|avif)$/.test(mimeType);
   const isPdf = mimeType === "application/pdf";
-  const isText = /^text\/|application\/(json|xml)/.test(mimeType);
+  // Shared with version comparison so the two cannot disagree about a format.
+  const isText = isTextDocument(doc);
 
   useEffect(() => {
     let cancelled = false;
