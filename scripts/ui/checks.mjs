@@ -240,15 +240,29 @@ export async function runChecks({ page, base, report, shot }) {
     Array.isArray(carried) && carried.length === picked,
     `payload had ${carried.length} id(s)`
   );
-  const filed = await page.waitFor(
-    `
-      const list = await fetch('/api/collections', { headers: { Authorization: 'Bearer ' + localStorage['dsms.token'] } }).then(r => r.json());
-      const target = list.collections.find((c) => /quarterly review/i.test(c.name));
-      const count = target.documentCount ?? target.count;
-      return count ? count + '/' + list.unfiled : false;
-    `,
-    { label: "the drop to be filed" }
-  );
+  /*
+   * Wait for the *expected* count, not for "any progress".
+   *
+   * The server files documents one at a time, so a poll that accepts the first
+   * non-zero count observes a partially applied drop and reports it as the final
+   * answer. That is exactly what happened: this read "1 of 3 filed" as a failure
+   * on a slower machine while the remaining two writes were still in flight.
+   */
+  const readFiled = `
+    const list = await fetch('/api/collections', { headers: { Authorization: 'Bearer ' + localStorage['dsms.token'] } }).then(r => r.json());
+    const target = list.collections.find((c) => /quarterly review/i.test(c.name));
+    const count = (target?.documentCount ?? target?.count) || 0;
+    return count + '/' + list.unfiled;
+  `;
+  let filed = "0/?";
+  try {
+    filed = await page.waitFor(
+      `${readFiled.replace("return count + '/' + list.unfiled;", `return count === ${picked} ? count + '/' + list.unfiled : false;`)}`,
+      { label: `all ${picked} documents to be filed` }
+    );
+  } catch {
+    filed = await page.eval(readFiled);
+  }
   check(
     "dragging one card of a three-document selection files all three",
     filed.startsWith("3/"),
