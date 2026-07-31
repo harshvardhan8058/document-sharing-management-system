@@ -11,6 +11,8 @@ const documentRoutes = require("./document.routes");
 const shareRoutes = require("./share.routes");
 const statsRoutes = require("./stats.routes");
 const adminRoutes = require("./admin.routes");
+const collectionRoutes = require("./collection.routes");
+const notificationRoutes = require("./notification.routes");
 
 const router = express.Router();
 
@@ -47,7 +49,10 @@ router.get("/", (req, res) => {
         "GET /api/auth/me/activity": "Your audit trail",
       },
       documents: {
-        "GET /api/documents": "List (scope, search, category, tag, visibility, sort, page, limit)",
+        "GET /api/documents":
+          "List (scope, search, inContent, category, tag, visibility, collectionId, sort, page, limit)",
+        "POST /api/documents/bulk": "Trash, restore, delete, star or unstar many at once",
+        "POST /api/documents/duplicate-check": "Look up an existing upload by SHA-256",
         "POST /api/documents": "Upload (multipart: file, title, description, tags, visibility)",
         "GET /api/documents/tags": "Distinct tags you can see",
         "GET /api/documents/:id": "Detail with versions, shares and activity",
@@ -77,6 +82,29 @@ router.get("/", (req, res) => {
         "GET /api/stats/activity": "Instance-wide audit feed (admin)",
         "GET /api/stats/system": "Instance health (admin)",
       },
+      collections: {
+        "GET /api/collections": "Your collections with live document counts",
+        "POST /api/collections": "Create a collection",
+        "PATCH /api/collections/:id": "Rename, recolour or reorder",
+        "DELETE /api/collections/:id": "Delete (documents become unfiled, never deleted)",
+        "POST /api/collections/:id/documents": "File documents into a collection",
+        "POST /api/collections/unfile": "Remove documents from any collection",
+      },
+      discussion: {
+        "GET /api/documents/:id/comments": "Threaded comments",
+        "POST /api/documents/:id/comments": "Comment or reply, with @mentions",
+        "PATCH /api/documents/:id/comments/:commentId": "Edit your own comment",
+        "DELETE /api/documents/:id/comments/:commentId": "Delete yours, or moderate as a manager",
+      },
+      notifications: {
+        "GET /api/notifications": "Your notifications with an unread count",
+        "GET /api/notifications/unread-count": "Just the badge number",
+        "POST /api/notifications/:id/read": "Mark one read",
+        "POST /api/notifications/read-all": "Mark everything read",
+        "DELETE /api/notifications/read": "Clear the ones already read",
+        "POST /api/notifications/stream/ticket": "Single-use ticket for the event stream",
+        "GET /api/notifications/stream?ticket=": "Server-Sent Events: live notifications and comments",
+      },
       administration: {
         "GET /api/admin/users": "List accounts with storage footprint (admin)",
         "PATCH /api/admin/users/:id": "Change role, active state or quota (admin)",
@@ -93,5 +121,7 @@ router.use("/documents", documentRoutes);
 router.use("/share", shareRoutes);
 router.use("/stats", statsRoutes);
 router.use("/admin", adminRoutes);
+router.use("/collections", collectionRoutes);
+router.use("/notifications", notificationRoutes);
 
 module.exports = router;

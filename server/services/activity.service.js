@@ -24,6 +24,18 @@ const ACTIONS = {
   "document.restored": "Restored",
   "document.deleted": "Permanently deleted",
 
+  "collection.created": "Created the collection",
+  "collection.updated": "Updated the collection",
+  "collection.deleted": "Deleted the collection",
+  "collection.documents_added": "Filed documents into a collection",
+  "collection.documents_removed": "Removed documents from a collection",
+
+  "comment.created": "Commented on",
+  "comment.deleted": "Deleted a comment on",
+
+  "document.bulk_trashed": "Moved several documents to trash",
+  "document.bulk_restored": "Restored several documents",
+
   "share.user_granted": "Shared",
   "share.user_revoked": "Stopped sharing",
   "share.link_created": "Created a public link for",

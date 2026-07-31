@@ -9,16 +9,31 @@ import { useAuth } from "../context/AuthContext";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { useShell } from "../components/AppShell";
 import { compactNumber, formatNumber, relativeTime, usageTone, visibilityLabel } from "../lib/format";
+import { useCountUp, usePointerSpotlight } from "../lib/useMotion";
 
-function MetricTile({ label, icon, value, meta, spark, sparkColor, accent }) {
+/**
+ * A dashboard metric.
+ *
+ * The number counts up from its previous value, which makes a refresh legible —
+ * you can see *that* something changed, not just what it now says. `rawValue`
+ * drives the animation while `format` renders it, so "1.2k" still animates.
+ */
+function MetricTile({ label, icon, rawValue, format, meta, spark, sparkColor, accent, index = 0 }) {
+  const spotlightRef = usePointerSpotlight({ tilt: 2 });
+  const animated = useCountUp(rawValue);
+
   return (
-    <article className="panel metric">
+    <article
+      ref={spotlightRef}
+      className="panel metric spotlight spotlight-edge tilt stagger-in"
+      style={{ "--i": index }}
+    >
       {accent ? <span className="metric__orb" style={{ background: accent }} /> : null}
       <div className="metric__label">
         <Icon name={icon} size={12} />
         {label}
       </div>
-      <div className="metric__value nums">{value}</div>
+      <div className="metric__value nums">{format ? format(animated) : animated}</div>
       {meta ? <div className="metric__meta">{meta}</div> : null}
       {spark?.length ? (
         <div className="metric__spark">
@@ -123,32 +138,40 @@ export default function Dashboard() {
 
       <div className="grid-metrics">
         <MetricTile
+          index={0}
           label="Documents"
           icon="files"
-          value={compactNumber(totals.documents)}
+          rawValue={totals.documents}
+          format={compactNumber}
           meta={`${formatNumber(totals.starred)} starred`}
           spark={timeline}
           sparkColor="#67e8f9"
           accent="linear-gradient(135deg,#67e8f9,#5b8cff)"
         />
         <MetricTile
+          index={1}
           label="Downloads"
           icon="download"
-          value={compactNumber(totals.downloads)}
+          rawValue={totals.downloads}
+          format={compactNumber}
           meta={`${formatNumber(totals.views)} views`}
           accent="linear-gradient(135deg,#a855f7,#5b8cff)"
         />
         <MetricTile
+          index={2}
           label="Active shares"
           icon="share"
-          value={compactNumber(totals.peopleShares + totals.activeLinks)}
+          rawValue={totals.peopleShares + totals.activeLinks}
+          format={compactNumber}
           meta={`${formatNumber(totals.peopleShares)} people · ${formatNumber(totals.activeLinks)} links`}
           accent="linear-gradient(135deg,#34d399,#67e8f9)"
         />
         <MetricTile
+          index={3}
           label="Shared with me"
           icon="users"
-          value={compactNumber(totals.sharedWithMe)}
+          rawValue={totals.sharedWithMe}
+          format={compactNumber}
           meta={totals.trashed ? `${formatNumber(totals.trashed)} in trash` : "Trash is empty"}
           accent="linear-gradient(135deg,#fbbf24,#fb7185)"
         />

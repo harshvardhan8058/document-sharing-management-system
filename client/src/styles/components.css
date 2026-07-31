@@ -1509,3 +1509,452 @@ button.chip:hover {
 .strength__seg--2 { background: var(--amber); }
 .strength__seg--3 { background: var(--blue); }
 .strength__seg--4 { background: var(--mint); }
+
+
+/* ==========================================================================
+   Selection, collections, comments, notifications
+   Added with the interaction overhaul.
+   ========================================================================== */
+
+/* -- card selection ------------------------------------------------------- */
+
+.doc-card__select {
+  position: absolute;
+  top: var(--space-3);
+  left: var(--space-3);
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease-out);
+}
+
+.doc-card:hover .doc-card__select,
+.doc-card__select--shown,
+.doc-card__select:focus-within {
+  opacity: 1;
+}
+
+.doc-card__select input {
+  appearance: none;
+  width: 19px;
+  height: 19px;
+  border-radius: var(--r-xs);
+  border: 1.5px solid var(--line-strong);
+  background: var(--glass-bg-solid);
+  cursor: pointer;
+  display: grid;
+  place-content: center;
+  transition: all var(--t-fast) var(--ease-out);
+}
+
+.doc-card__select input::after {
+  content: "";
+  width: 9px;
+  height: 5px;
+  border: 2px solid #05070f;
+  border-top: 0;
+  border-right: 0;
+  transform: rotate(-45deg) scale(0);
+  transition: transform var(--t-fast) var(--ease-spring);
+}
+
+.doc-card__select input:checked {
+  background: var(--grad-primary);
+  border-color: transparent;
+}
+
+.doc-card__select input:checked::after {
+  transform: rotate(-45deg) scale(1);
+}
+
+/* Nudge the glyph aside so the checkbox never covers it. */
+.doc-card:hover .doc-card__top,
+.doc-card.selected .doc-card__top {
+  transition: padding var(--t-fast) var(--ease-out);
+}
+
+/* -- content match snippet ------------------------------------------------ */
+
+.doc-card__snippet {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--line-strong);
+  background: var(--sunken);
+  border-radius: 0 var(--r-xs) var(--r-xs) 0;
+}
+
+.snippet-hit {
+  background: rgba(103, 232, 249, 0.24);
+  color: var(--text);
+  border-radius: 3px;
+  padding: 0 2px;
+  font-weight: 600;
+}
+
+/* -- bulk action bar ------------------------------------------------------ */
+
+/* Floats over the content so it is reachable without scrolling back up. */
+.bulk-bar {
+  position: sticky;
+  bottom: var(--space-4);
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-lg);
+  background: var(--glass-bg-solid);
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-lg), var(--glow-accent);
+  animation: bulk-rise var(--t-base) var(--ease-spring);
+}
+
+@keyframes bulk-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+
+.bulk-bar__count {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px var(--space-3);
+  border-radius: var(--r-full);
+  background: var(--grad-primary);
+  color: #05070f;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* -- collections in the sidebar ------------------------------------------- */
+
+.collection-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  text-align: left;
+  border: 1px solid transparent;
+  transition: all var(--t-fast) var(--ease-out);
+}
+
+.collection-link:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.collection-link--active {
+  background: linear-gradient(90deg, rgba(103, 232, 249, 0.12), transparent);
+  color: var(--text);
+}
+
+.collection-dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 3px;
+  box-shadow: 0 0 8px -1px currentColor;
+}
+
+.collection-link__count {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* -- comments ------------------------------------------------------------- */
+
+.comment {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+}
+
+.comment__body {
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.comment__body--deleted {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.comment__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.comment__actions {
+  display: flex;
+  gap: var(--space-1);
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease-out);
+}
+
+.comment:hover .comment__actions,
+.comment:focus-within .comment__actions {
+  opacity: 1;
+}
+
+/* Replies sit indented under their parent with a connecting rail. */
+.comment__replies {
+  margin-top: var(--space-2);
+  margin-left: var(--space-2);
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--line);
+}
+
+.mention {
+  color: var(--cyan);
+  font-weight: 600;
+  background: rgba(103, 232, 249, 0.1);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+
+.mention--unresolved {
+  color: var(--text-muted);
+  background: none;
+  font-weight: 500;
+}
+
+/* -- notifications -------------------------------------------------------- */
+
+.notif-button {
+  position: relative;
+}
+
+.notif-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-full);
+  background: var(--rose);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 2px var(--abyss);
+  animation: badge-pop var(--t-base) var(--ease-spring);
+}
+
+@keyframes badge-pop {
+  from { transform: scale(0); }
+  to { transform: scale(1); }
+}
+
+.notif-panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: var(--z-drawer);
+  width: min(400px, calc(100vw - 2 * var(--space-4)));
+  max-height: min(560px, 70vh);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-lg);
+  background: var(--glass-bg-solid);
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  animation: scale-in var(--t-base) var(--ease-out);
+}
+
+.notif-item {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  transition: background var(--t-fast) var(--ease-out);
+}
+
+.notif-item:hover {
+  background: var(--surface-2);
+}
+
+.notif-item--unread {
+  background: rgba(103, 232, 249, 0.05);
+}
+
+.notif-item--unread::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cyan);
+}
+
+.notif-item__title {
+  font-size: var(--fs-sm);
+  font-weight: 550;
+  line-height: 1.4;
+}
+
+.notif-item__body {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* -- quick look ----------------------------------------------------------- */
+
+.quicklook {
+  width: min(1000px, 92vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-lg);
+  background: var(--glass-bg-solid);
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  animation: scale-in var(--t-base) var(--ease-out);
+}
+
+.quicklook__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.quicklook__body {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-4);
+  display: grid;
+  place-items: center;
+}
+
+/* -- onboarding tour ------------------------------------------------------ */
+
+.tour-card {
+  width: min(420px, calc(100vw - 2 * var(--space-4)));
+  padding: var(--space-5);
+  border-radius: var(--r-lg);
+  background: var(--glass-bg-solid);
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-lg), var(--glow-violet);
+  animation: scale-in var(--t-base) var(--ease-spring);
+}
+
+.tour-dots {
+  display: flex;
+  gap: 5px;
+}
+
+.tour-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  transition: all var(--t-base) var(--ease-out);
+}
+
+.tour-dot--active {
+  width: 18px;
+  border-radius: var(--r-full);
+  background: var(--grad-primary);
+}
+
+/* -- chart tooltip -------------------------------------------------------- */
+
+.chart-tip {
+  position: absolute;
+  z-index: 5;
+  transform: translate(-50%, -120%);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-sm);
+  background: var(--glass-bg-solid);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-md);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: fade-in var(--t-fast) linear;
+}
+
+/* -- skip link ------------------------------------------------------------ */
+
+.skip-link {
+  position: absolute;
+  left: var(--space-4);
+  top: -60px;
+  z-index: var(--z-toast);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--r-sm);
+  background: var(--grad-primary);
+  color: #05070f;
+  font-size: var(--fs-sm);
+  font-weight: 650;
+  transition: top var(--t-base) var(--ease-out);
+}
+
+.skip-link:focus {
+  top: var(--space-4);
+}
+
+
+/* Inline action inside a toast — the "Undo" affordance. */
+.toast__action {
+  margin-top: var(--space-2);
+  padding: 3px var(--space-3);
+  border-radius: var(--r-xs);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  color: var(--text);
+  transition: all var(--t-fast) var(--ease-out);
+}
+
+.toast__action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}

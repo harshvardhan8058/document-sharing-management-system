@@ -1411,6 +1411,430 @@ async function runRegressions() {
     assert.strictEqual((await maintenance.purgeTrash(0)).skipped, true);
     assert.strictEqual(await db.activities.count({}), before, "nothing should have been removed");
   });
+
+  await runCollaborationChecks();
+}
+
+// ---------------------------------------------------------------------------
+// Collections, discussion, notifications, live events, bulk actions and search.
+// ---------------------------------------------------------------------------
+
+async function runCollaborationChecks() {
+  const { db } = require("../server/data");
+  const owner = { token: state.ownerToken };
+
+  let collectionId;
+  let docA;
+  let docB;
+
+  group("Collaboration setup");
+
+  await check("the collaborator signs in again after being deactivated earlier", async () => {
+    // The admin checks above deactivate this account, which correctly revokes
+    // every token it held. Reactivation does not resurrect the old token — that
+    // is the point of revocation — so a fresh sign-in is required here.
+    const res = await call("POST", "/api/auth/login", {
+      body: { email: collaborator.email, password: collaborator.password },
+    });
+    expectStatus(res, 200);
+    state.collabToken = res.body.token;
+
+    expectStatus(await call("GET", "/api/auth/me", { token: state.collabToken }), 200);
+  });
+
+  group("Collections");
+
+  await check("a collection can be created", async () => {
+    const res = await call("POST", "/api/collections", {
+      token: owner.token,
+      body: { name: "Contracts", color: "#a855f7", icon: "star" },
+    });
+    expectStatus(res, 201);
+    assert.strictEqual(res.body.collection.name, "Contracts");
+    assert.strictEqual(res.body.collection.documentCount, 0);
+    collectionId = res.body.collection.id;
+  });
+
+  await check("duplicate names and bad colours are rejected", async () => {
+    expectStatus(await call("POST", "/api/collections", { token: owner.token, body: { name: "Contracts" } }), 409);
+    const bad = await call("POST", "/api/collections", {
+      token: owner.token,
+      body: { name: "Other", color: "red" },
+    });
+    expectStatus(bad, 422);
+  });
+
+  await check("documents can be filed and the count follows", async () => {
+    const first = await call("POST", "/api/documents", {
+      token: owner.token,
+      body: uploadForm({ filename: "contract-a.md", content: "# Master agreement\n\nindemnity and liability terms", title: "Contract A" }),
+    });
+    const second = await call("POST", "/api/documents", {
+      token: owner.token,
+      body: uploadForm({ filename: "contract-b.txt", content: "renewal schedule", title: "Contract B" }),
+    });
+    expectStatus(first, 201);
+    expectStatus(second, 201);
+    docA = first.body.document.id;
+    docB = second.body.document.id;
+
+    const filed = await call("POST", `/api/collections/${collectionId}/documents`, {
+      token: owner.token,
+      body: { documentIds: [docA, docB] },
+    });
+    expectStatus(filed, 200);
+    assert.strictEqual(filed.body.moved, 2);
+
+    const listed = await call("GET", "/api/collections", { token: owner.token });
+    const mine = listed.body.collections.find((entry) => entry.id === collectionId);
+    assert.strictEqual(mine.documentCount, 2);
+  });
+
+  await check("listings can be filtered by collection, and by 'unfiled'", async () => {
+    const inside = await call("GET", `/api/documents?collectionId=${collectionId}`, { token: owner.token });
+    assert.strictEqual(inside.body.meta.total, 2);
+
+    const unfiled = await call("GET", "/api/documents?collectionId=none", { token: owner.token });
+    assert.ok(
+      unfiled.body.documents.every((doc) => doc.collectionId === null),
+      "the unfiled filter must only return documents with no collection"
+    );
+  });
+
+  await check("another user cannot see or touch the collection", async () => {
+    expectStatus(
+      await call("PATCH", `/api/collections/${collectionId}`, {
+        token: state.collabToken,
+        body: { name: "Mine now" },
+      }),
+      404
+    );
+  });
+
+  await check("deleting a collection unfiles its documents rather than deleting them", async () => {
+    const res = await call("DELETE", `/api/collections/${collectionId}`, { token: owner.token });
+    expectStatus(res, 200);
+    assert.strictEqual(res.body.documentsUnfiled, 2);
+
+    const survived = await call("GET", `/api/documents/${docA}`, { token: owner.token });
+    expectStatus(survived, 200);
+    assert.strictEqual(survived.body.document.collectionId, null);
+  });
+
+  group("Search inside documents");
+
+  await check("body text is not searched unless asked for", async () => {
+    const off = await call("GET", "/api/documents?search=indemnity", { token: owner.token });
+    assert.strictEqual(off.body.meta.total, 0, "content search must be opt-in");
+
+    const on = await call("GET", "/api/documents?search=indemnity&inContent=true", { token: owner.token });
+    assert.strictEqual(on.body.meta.total, 1);
+  });
+
+  await check("a content hit comes back with a highlighted excerpt", async () => {
+    const res = await call("GET", "/api/documents?search=indemnity&inContent=true", { token: owner.token });
+    const [hit] = res.body.documents;
+    assert.ok(hit.matchExcerpt, "the result should explain why it matched");
+    assert.ok(hit.matchExcerpt.text.includes("indemnity"));
+    assert.strictEqual(hit.matchExcerpt.term, "indemnity");
+  });
+
+  await check("only text-like formats are indexed", async () => {
+    const pdf = await call("POST", "/api/documents", {
+      token: owner.token,
+      body: uploadForm({ filename: "scan.pdf", content: "%PDF-1.7\nindemnity\n", title: "Scan" }),
+    });
+    expectStatus(pdf, 201);
+    // A PDF is a container: pulling words out needs a real parser, so it is not
+    // indexed rather than indexed as binary noise.
+    assert.strictEqual(pdf.body.document.searchable, false);
+  });
+
+  group("Duplicate detection");
+
+  await check("an identical upload is reported before it is sent again", async () => {
+    const content = "renewal schedule";
+    const checksum = require("crypto").createHash("sha256").update(content).digest("hex");
+
+    const res = await call("POST", "/api/documents/duplicate-check", {
+      token: owner.token,
+      body: { checksum },
+    });
+    expectStatus(res, 200);
+    assert.strictEqual(res.body.duplicate, true);
+    assert.strictEqual(res.body.document.title, "Contract B");
+  });
+
+  await check("duplicate lookups cannot probe another account's files", async () => {
+    const checksum = require("crypto").createHash("sha256").update("renewal schedule").digest("hex");
+    const res = await call("POST", "/api/documents/duplicate-check", {
+      token: state.collabToken,
+      body: { checksum },
+    });
+    assert.strictEqual(res.body.duplicate, false, "the same bytes under another owner must not be revealed");
+  });
+
+  group("Discussion");
+
+  let commentId;
+
+  await check("sharing a document now notifies the recipient", async () => {
+    expectStatus(
+      await call("POST", `/api/documents/${docA}/shares`, {
+        token: owner.token,
+        body: { email: collaborator.email, permission: "edit" },
+      }),
+      201
+    );
+    await drain();
+
+    const res = await call("GET", "/api/notifications", { token: state.collabToken });
+    expectStatus(res, 200);
+    assert.ok(res.body.unread >= 1, "a share should produce an unread notification");
+    assert.ok(res.body.notifications.some((n) => n.type === "document.shared"));
+  });
+
+  await check("a comment with an @mention notifies the person mentioned", async () => {
+    const handle = owner.token && state.owner.email.split("@")[0];
+    const res = await call("POST", `/api/documents/${docA}/comments`, {
+      token: state.collabToken,
+      body: { body: `Looks fine @${handle} — shipping?` },
+    });
+    expectStatus(res, 201);
+    assert.strictEqual(res.body.comment.mentions.length, 1, "@localpart should resolve to a user");
+    commentId = res.body.comment.id;
+
+    await drain();
+    const notifications = await call("GET", "/api/notifications", { token: owner.token });
+    assert.ok(notifications.body.notifications.some((n) => n.type === "comment.mention"));
+  });
+
+  await check("a handle matching nobody is reported rather than silently dropped", async () => {
+    const res = await call("POST", `/api/documents/${docA}/comments`, {
+      token: state.collabToken,
+      body: { body: "cc @nobody-at-all" },
+    });
+    expectStatus(res, 201);
+    assert.deepStrictEqual(res.body.unresolvedMentions, ["nobody-at-all"]);
+  });
+
+  await check("replies nest one level under their parent", async () => {
+    expectStatus(
+      await call("POST", `/api/documents/${docA}/comments`, {
+        token: owner.token,
+        body: { body: "Yes, Friday.", parentId: commentId },
+      }),
+      201
+    );
+
+    const thread = await call("GET", `/api/documents/${docA}/comments`, { token: owner.token });
+    const parent = thread.body.comments.find((comment) => comment.id === commentId);
+    assert.strictEqual(parent.replies.length, 1);
+  });
+
+  await check("only the author may edit, but a manager may remove", async () => {
+    expectStatus(
+      await call("PATCH", `/api/documents/${docA}/comments/${commentId}`, {
+        token: owner.token,
+        body: { body: "hijacked" },
+      }),
+      403
+    );
+
+    const removed = await call("DELETE", `/api/documents/${docA}/comments/${commentId}`, { token: owner.token });
+    expectStatus(removed, 200);
+    assert.strictEqual(removed.body.moderated, true, "the document owner moderates, not impersonates");
+  });
+
+  await check("a removed comment keeps its place but loses its content", async () => {
+    const thread = await call("GET", `/api/documents/${docA}/comments`, { token: owner.token });
+    const gone = thread.body.comments.find((comment) => comment.id === commentId);
+    assert.strictEqual(gone.deleted, true);
+    assert.strictEqual(gone.body, "");
+    assert.strictEqual(gone.replies.length, 1, "replies must survive their parent");
+  });
+
+  await check("someone with no access cannot read the thread", async () => {
+    const stranger = await call("POST", "/api/auth/register", {
+      body: {
+        firstName: "Nos",
+        lastName: "Access",
+        email: `stranger-${stamp}@example.com`,
+        password: "Stranger9Pass",
+      },
+    });
+    expectStatus(await call("GET", `/api/documents/${docA}/comments`, { token: stranger.body.token }), 404);
+  });
+
+  group("Notifications");
+
+  await check("read state is per-user and cannot be changed across accounts", async () => {
+    const list = await call("GET", "/api/notifications", { token: state.collabToken });
+    const [first] = list.body.notifications;
+
+    const foreign = await call("POST", `/api/notifications/${first.id}/read`, { token: owner.token });
+    assert.strictEqual(foreign.body.updated, 0, "another account must not be able to mark it read");
+
+    const own = await call("POST", `/api/notifications/${first.id}/read`, { token: state.collabToken });
+    expectStatus(own, 200);
+    assert.strictEqual(own.body.updated, 1);
+  });
+
+  await check("marking everything read empties the badge", async () => {
+    const res = await call("POST", "/api/notifications/read-all", { token: state.collabToken });
+    expectStatus(res, 200);
+    assert.strictEqual(res.body.unread, 0);
+    assert.strictEqual((await call("GET", "/api/notifications/unread-count", { token: state.collabToken })).body.unread, 0);
+  });
+
+  group("Live events (Server-Sent Events)");
+
+  await check("the stream refuses to open without a valid ticket", async () => {
+    expectStatus(await call("GET", "/api/notifications/stream"), 422);
+
+    const bogus = await call("GET", `/api/notifications/stream?ticket=${"x".repeat(24)}`);
+    expectStatus(bogus, 401);
+    expectCode(bogus, "TICKET_INVALID");
+  });
+
+  await check("a ticket opens the stream and is then single-use", async () => {
+    const issued = await call("POST", "/api/notifications/stream/ticket", { token: state.collabToken });
+    expectStatus(issued, 200);
+
+    const controller = new AbortController();
+    const stream = await fetch(`${BASE}/api/notifications/stream?ticket=${issued.body.ticket}`, {
+      signal: controller.signal,
+    });
+
+    assert.strictEqual(stream.status, 200);
+    assert.strictEqual((stream.headers.get("content-type") || "").split(";")[0], "text/event-stream");
+
+    // Replaying the same ticket must fail even while the first stream is open.
+    const replay = await fetch(`${BASE}/api/notifications/stream?ticket=${issued.body.ticket}`);
+    assert.strictEqual(replay.status, 401, "a ticket must not be reusable");
+
+    controller.abort();
+  });
+
+  await check("an event reaches an open stream without polling", async () => {
+    const issued = await call("POST", "/api/notifications/stream/ticket", { token: state.collabToken });
+
+    const controller = new AbortController();
+    const stream = await fetch(`${BASE}/api/notifications/stream?ticket=${issued.body.ticket}`, {
+      signal: controller.signal,
+    });
+
+    const chunks = [];
+    const reader = stream.body.getReader();
+    const decoder = new TextDecoder();
+
+    const pump = (async () => {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(decoder.decode(value, { stream: true }));
+        }
+      } catch {
+        /* aborted */
+      }
+    })();
+
+    // Wait for the greeting so we know the stream is registered.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.ok(chunks.join("").includes("event: ready"), "the stream should greet on connect");
+
+    // Comment as the owner, mentioning the collaborator.
+    await call("POST", `/api/documents/${docA}/comments`, {
+      token: owner.token,
+      body: { body: `ping @${collaborator.email.split("@")[0]}` },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const text = chunks.join("");
+
+    assert.ok(text.includes("event: notification"), "the mention should arrive as a push");
+    assert.match(text, /"unread":\s*\d+/, "the push should carry the new unread count");
+
+    controller.abort();
+    await pump;
+  });
+
+  group("Bulk actions");
+
+  let bulkIds = [];
+
+  await check("one action applies to many documents", async () => {
+    bulkIds = [];
+    for (let index = 0; index < 4; index += 1) {
+      const created = await call("POST", "/api/documents", {
+        token: owner.token,
+        body: uploadForm({ filename: `bulk-${index}.txt`, content: `payload ${index}`, title: `Bulk ${index}` }),
+      });
+      expectStatus(created, 201);
+      bulkIds.push(created.body.document.id);
+    }
+
+    const starred = await call("POST", "/api/documents/bulk", {
+      token: owner.token,
+      body: { action: "star", documentIds: bulkIds },
+    });
+    expectStatus(starred, 200);
+    assert.strictEqual(starred.body.succeeded, 4);
+
+    const list = await call("GET", "/api/documents?scope=starred", { token: owner.token });
+    assert.ok(list.body.meta.total >= 4);
+  });
+
+  await check("trash and restore round-trip, which is what makes undo possible", async () => {
+    const trashed = await call("POST", "/api/documents/bulk", {
+      token: owner.token,
+      body: { action: "trash", documentIds: bulkIds },
+    });
+    assert.strictEqual(trashed.body.succeeded, 4);
+    assert.deepStrictEqual(trashed.body.succeededIds.sort(), [...bulkIds].sort());
+
+    const restored = await call("POST", "/api/documents/bulk", {
+      token: owner.token,
+      body: { action: "restore", documentIds: trashed.body.succeededIds },
+    });
+    assert.strictEqual(restored.body.succeeded, 4);
+  });
+
+  await check("a partial failure applies the rest and itemises what was skipped", async () => {
+    const res = await call("POST", "/api/documents/bulk", {
+      token: owner.token,
+      body: { action: "trash", documentIds: [bulkIds[0], "a".repeat(24)] },
+    });
+    expectStatus(res, 200);
+    assert.strictEqual(res.body.succeeded, 1);
+    assert.strictEqual(res.body.failed.length, 1);
+
+    await call("POST", "/api/documents/bulk", {
+      token: owner.token,
+      body: { action: "restore", documentIds: [bulkIds[0]] },
+    });
+  });
+
+  await check("a total failure is an error, so it cannot be mistaken for success", async () => {
+    const res = await call("POST", "/api/documents/bulk", {
+      token: state.collabToken,
+      body: { action: "delete", documentIds: bulkIds },
+    });
+    expectStatus(res, 403);
+    expectCode(res, "BULK_FAILED");
+    assert.strictEqual(res.body.error.details.length, 4);
+  });
+
+  await check("an unknown action is rejected outright", async () => {
+    expectStatus(
+      await call("POST", "/api/documents/bulk", {
+        token: owner.token,
+        body: { action: "incinerate", documentIds: bulkIds },
+      }),
+      422
+    );
+  });
 }
 
 // ---------------------------------------------------------------------------

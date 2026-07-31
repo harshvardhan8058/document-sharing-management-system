@@ -1,0 +1,31 @@
+{
+  "name": "DSMS — Document Sharing & Management",
+  "short_name": "DSMS",
+  "description": "Upload, version, share and audit documents with permissions enforced by the server.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#04050d",
+  "theme_color": "#05060f",
+  "orientation": "any",
+  "categories": ["productivity", "business"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    { "name": "All documents", "url": "/documents" },
+    { "name": "Shared with me", "url": "/shared" },
+    { "name": "Starred", "url": "/starred" }
+  ]
+}

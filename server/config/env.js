@@ -132,6 +132,28 @@ const config = Object.freeze({
     hasExplicitSecret: Boolean(str("JWT_SECRET", "")),
   }),
 
+  search: Object.freeze({
+    /**
+     * How much of a text file to keep for in-content search. Bounded because
+     * the local driver holds every record in memory, and because the opening
+     * few KB is where titles, headings and abstracts live.
+     */
+    snippetBytes: int("SEARCH_SNIPPET_KB", 16) * 1024,
+    snippetKb: int("SEARCH_SNIPPET_KB", 16),
+  }),
+
+  events: Object.freeze({
+    /**
+     * Lifetime of a single-use Server-Sent Events ticket. EventSource cannot
+     * send an Authorization header, so the client swaps its bearer token for a
+     * short-lived ticket instead of putting the real token in a URL (where it
+     * would land in access logs, proxies and browser history).
+     */
+    ticketTtlMs: int("SSE_TICKET_TTL_SECONDS", 30) * 1000,
+    heartbeatMs: int("SSE_HEARTBEAT_SECONDS", 25) * 1000,
+    maxConnectionsPerUser: int("SSE_MAX_CONNECTIONS_PER_USER", 6),
+  }),
+
   storage: Object.freeze({
     /**
      * Per-account storage allowance.

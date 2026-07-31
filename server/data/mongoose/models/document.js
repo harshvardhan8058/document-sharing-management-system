@@ -43,6 +43,25 @@ const documentSchema = new mongoose.Schema(
     checksum: { type: String, default: "" },
     category: { type: String, default: "other", index: true },
 
+    /**
+     * Owning collection, or null for "unfiled". A collection is organisational
+     * only — it never affects who can see the document.
+     */
+    collectionId: { type: String, default: null, index: true },
+
+    /**
+     * Lower-cased opening slice of a text-ish file, kept so search can look
+     * *inside* documents instead of only at their titles.
+     *
+     * A bounded snippet rather than the whole file: full content would bloat
+     * every record (and the local driver holds records in memory), while the
+     * first few KB is where titles, headings and summaries live. The cap is
+     * `SEARCH_SNIPPET_KB`, and `snippetTruncated` records when a file was longer
+     * so the UI can say so rather than implying a whole-file match.
+     */
+    contentSnippet: { type: String, default: "" },
+    snippetTruncated: { type: Boolean, default: false },
+
     version: { type: Number, default: 1 },
     versions: { type: [versionSchema], default: [] },
 
@@ -61,6 +80,10 @@ const documentSchema = new mongoose.Schema(
 
 // Supports the common "my documents, newest first" listing.
 documentSchema.index({ ownerId: 1, status: 1, createdAt: -1 });
+// Collection listings.
+documentSchema.index({ collectionId: 1, status: 1 });
+// Duplicate detection by content hash, scoped to an owner.
+documentSchema.index({ ownerId: 1, checksum: 1 });
 // Text-ish search fallback (regex search is used so this stays a prefix index).
 documentSchema.index({ title: 1 });
 

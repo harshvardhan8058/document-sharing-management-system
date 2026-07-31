@@ -48,7 +48,13 @@ export function Sparkline({ points = [], color = "#67e8f9", height = 44, fill = 
   );
 }
 
-/** Daily upload volume. Hovering a column reveals its exact value. */
+/**
+ * Daily upload volume, with a floating tooltip on the hovered column.
+ *
+ * The tooltip is positioned from the column's own offset rather than from mouse
+ * coordinates, so it stays anchored while the pointer moves within a bar and
+ * lands identically for keyboard focus.
+ */
 export function DayBars({ data = [] }) {
   const [hovered, setHovered] = useState(null);
   const max = Math.max(...data.map((day) => day.count), 1);
@@ -56,32 +62,49 @@ export function DayBars({ data = [] }) {
   if (!data.length) return <p className="text-sm dim">No activity yet.</p>;
 
   const active = hovered === null ? null : data[hovered];
+  const total = data.reduce((sum, day) => sum + day.count, 0);
 
   return (
     <div className="col gap-3">
       <div className="row between text-xs dim">
         <span>{data.length}-day upload volume</span>
         <span className="nums">
-          {active
-            ? `${formatDayLabel(active.date)} · ${formatNumber(active.count)} file${active.count === 1 ? "" : "s"} · ${formatBytes(active.bytes)}`
-            : `${formatNumber(data.reduce((sum, day) => sum + day.count, 0))} total`}
+          {formatNumber(total)} file{total === 1 ? "" : "s"} ·{" "}
+          {formatBytes(data.reduce((sum, day) => sum + day.bytes, 0))}
         </span>
       </div>
 
-      <div className="bars" onMouseLeave={() => setHovered(null)}>
+      <div className="bars relative" onMouseLeave={() => setHovered(null)}>
         {data.map((day, index) => (
-          <div
+          <button
+            type="button"
             key={day.date}
             className={`bars__col ${day.count === 0 ? "bars__col--empty" : ""}`}
             style={{
               height: `${Math.max(day.count === 0 ? 3 : 8, (day.count / max) * 100)}%`,
               animationDelay: `${index * 22}ms`,
-              opacity: hovered === null || hovered === index ? 1 : 0.45,
+              opacity: hovered === null || hovered === index ? 1 : 0.4,
             }}
             onMouseEnter={() => setHovered(index)}
-            title={`${formatDayLabel(day.date)}: ${day.count}`}
+            onFocus={() => setHovered(index)}
+            onBlur={() => setHovered(null)}
+            aria-label={`${formatDayLabel(day.date)}: ${day.count} file${day.count === 1 ? "" : "s"}, ${formatBytes(day.bytes)}`}
           />
         ))}
+
+        {active ? (
+          <span
+            className="chart-tip"
+            style={{ left: `${((hovered + 0.5) / data.length) * 100}%`, bottom: 0 }}
+          >
+            <strong>{formatDayLabel(active.date)}</strong>
+            <span className="dim">
+              {" "}
+              · {formatNumber(active.count)} file{active.count === 1 ? "" : "s"}
+              {active.bytes ? ` · ${formatBytes(active.bytes)}` : ""}
+            </span>
+          </span>
+        ) : null}
       </div>
 
       <div className="row between text-xs dim">

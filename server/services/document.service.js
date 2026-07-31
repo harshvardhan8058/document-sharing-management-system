@@ -130,6 +130,9 @@ function present(document, { user = null, accessLevel = "view" } = {}) {
       previewable: isInlinePreviewable(document.mimeType),
     },
 
+    collectionId: document.collectionId || null,
+    searchable: Boolean(document.contentSnippet),
+
     version: document.version,
     versionCount: (document.versions || []).length,
 
@@ -179,6 +182,31 @@ async function accessibleClause(user) {
   };
 }
 
+/**
+ * A window of stored text around the first occurrence of `term`.
+ *
+ * Returned with search results so the UI can show *why* a document matched.
+ * Without this, a content hit looks identical to a title hit and the user has to
+ * open the file to find out what the match even was.
+ *
+ * @returns {{text: string, term: string}|null}
+ */
+function buildExcerpt(snippet, term, radius = 90) {
+  if (!snippet || !term) return null;
+
+  const needle = String(term).trim().toLowerCase();
+  const at = snippet.indexOf(needle);
+  if (at === -1) return null;
+
+  const start = Math.max(0, at - radius);
+  const end = Math.min(snippet.length, at + needle.length + radius);
+
+  // Ellipses only where text was actually cut.
+  const text = `${start > 0 ? "…" : ""}${snippet.slice(start, end).trim()}${end < snippet.length ? "…" : ""}`;
+
+  return { text, term: needle };
+}
+
 /** Build the driver-agnostic filter for a listing request. */
 async function buildListFilter({ user, query }) {
   const scope = String(query.scope || "all");
@@ -203,18 +231,28 @@ async function buildListFilter({ user, query }) {
   if (query.search) {
     const pattern = escapeRegex(String(query.search).trim());
     if (pattern) {
-      clauses.push({
-        $or: [
-          { title: { $regex: pattern, $options: "i" } },
-          { description: { $regex: pattern, $options: "i" } },
-          { originalName: { $regex: pattern, $options: "i" } },
-          { tags: { $regex: pattern, $options: "i" } },
-        ],
-      });
+      const fields = [
+        { title: { $regex: pattern, $options: "i" } },
+        { description: { $regex: pattern, $options: "i" } },
+        { originalName: { $regex: pattern, $options: "i" } },
+        { tags: { $regex: pattern, $options: "i" } },
+      ];
+
+      // Opt-in, because searching inside documents is slower and because a hit
+      // on body text is a different kind of result than a hit on a title.
+      if (query.inContent === "true" || query.inContent === true) {
+        fields.push({ contentSnippet: { $regex: pattern, $options: "i" } });
+      }
+
+      clauses.push({ $or: fields });
     }
   }
 
   if (query.category) clauses.push({ category: String(query.category) });
+
+  // "unfiled" is a real filter, not the absence of one.
+  if (query.collectionId === "none") clauses.push({ collectionId: null });
+  else if (query.collectionId) clauses.push({ collectionId: String(query.collectionId) });
   if (query.tag) clauses.push({ tags: String(query.tag).toLowerCase() });
   if (query.visibility && VISIBILITIES.includes(query.visibility)) {
     clauses.push({ visibility: query.visibility });
@@ -242,10 +280,20 @@ async function list({ user, query = {} }) {
   ]);
 
   // Resolve each row's access level so the client gets accurate affordances.
+  const term = query.search ? String(query.search).trim() : "";
+  const wantExcerpt = Boolean(term) && (query.inContent === "true" || query.inContent === true);
+
   const documents = await Promise.all(
     records.map(async (record) => {
       const resolved = await access.resolve(record, user);
-      return present(record, { user, accessLevel: resolved.level });
+      const shaped = present(record, { user, accessLevel: resolved.level });
+
+      if (wantExcerpt) {
+        const excerpt = buildExcerpt(record.contentSnippet, term);
+        if (excerpt) shaped.matchExcerpt = excerpt;
+      }
+
+      return shaped;
     })
   );
 
@@ -310,6 +358,19 @@ async function create({ user, file, body = {}, req }) {
   const visibility = VISIBILITIES.includes(body.visibility) ? body.visibility : "private";
   const title = String(body.title || "").trim() || originalName;
 
+  const indexed = await storage.extractSearchSnippet({
+    absolutePath: file.path,
+    mimeType,
+    extension,
+  });
+
+  // Filing at upload time, if the client dragged into a collection.
+  let collectionId = null;
+  if (body.collectionId) {
+    const owned = await db.collections.findById(String(body.collectionId));
+    if (owned && owned.ownerId === user.id) collectionId = owned.id;
+  }
+
   const created = await db.documents.create({
     title,
     description: String(body.description || "").trim(),
@@ -326,6 +387,10 @@ async function create({ user, file, body = {}, req }) {
     size: file.size,
     checksum,
     category: categoryOf(originalName),
+
+    collectionId,
+    contentSnippet: indexed ? indexed.snippet : "",
+    snippetTruncated: indexed ? indexed.truncated : false,
 
     version: 1,
     versions: [
@@ -429,6 +494,13 @@ async function addVersion({ id, user, file, body = {}, req }) {
     note: String(body.note || "").trim().slice(0, 200),
   };
 
+  // Re-index: the search snippet must describe the version people now see.
+  const indexed = await storage.extractSearchSnippet({
+    absolutePath: file.path,
+    mimeType,
+    extension: extensionOf(originalName),
+  });
+
   const updated = await db.documents.updateById(id, {
     storedName: file.filename,
     originalName,
@@ -437,6 +509,8 @@ async function addVersion({ id, user, file, body = {}, req }) {
     size: file.size,
     checksum,
     category: categoryOf(originalName),
+    contentSnippet: indexed ? indexed.snippet : "",
+    snippetTruncated: indexed ? indexed.truncated : false,
     version: nextVersion,
     versions: [...(document.versions || []), entry],
   });
@@ -577,6 +651,107 @@ async function countDownload({ id, user, req, document, detail = "" }) {
   await activity.record("document.downloaded", { req, actor: user, document, detail });
 }
 
+/**
+ * Apply one mutation to many documents.
+ *
+ * Each document is authorised individually and failures are *reported* rather
+ * than aborting the batch — selecting forty documents and having the whole
+ * operation fail because one of them was shared read-only is worse than being
+ * told which two were skipped.
+ *
+ * @param {"trash"|"restore"|"delete"|"star"|"unstar"} action
+ */
+async function bulk({ user, action, documentIds, req }) {
+  const ids = [...new Set((documentIds || []).filter(Boolean))];
+  if (!ids.length) {
+    throw ApiError.unprocessable("Provide at least one document id", {
+      details: [{ field: "documentIds", message: "Required" }],
+    });
+  }
+
+  const REQUIRED = {
+    trash: "manage",
+    restore: "manage",
+    delete: "manage",
+    star: "view",
+    unstar: "view",
+  };
+
+  const required = REQUIRED[action];
+  if (!required) {
+    throw ApiError.unprocessable(`Unknown bulk action "${action}"`, {
+      details: [{ field: "action", message: `Expected one of: ${Object.keys(REQUIRED).join(", ")}` }],
+    });
+  }
+
+  const succeeded = [];
+  const failed = [];
+
+  for (const id of ids) {
+    try {
+      if (action === "trash") await trash({ id, user, req: null });
+      else if (action === "restore") await restore({ id, user, req: null });
+      else if (action === "delete") await destroy({ id, user, req: null });
+      else await setStar({ id, user, starred: action === "star", req: null });
+
+      succeeded.push(id);
+    } catch (err) {
+      failed.push({ id, code: err.code || "FAILED", message: err.message });
+    }
+  }
+
+  if (!succeeded.length) {
+    throw ApiError.forbidden(`None of those documents could be ${action}ed`, {
+      code: "BULK_FAILED",
+      details: failed,
+    });
+  }
+
+  // One audit line for the batch instead of forty, with the per-document
+  // entries already written by the individual operations above.
+  if (action === "trash" || action === "restore") {
+    await activity.record(`document.bulk_${action === "trash" ? "trashed" : "restored"}`, {
+      req,
+      actor: user,
+      detail: `${succeeded.length} document(s)`,
+    });
+  }
+
+  return { action, succeeded: succeeded.length, succeededIds: succeeded, failed };
+}
+
+/**
+ * Has this owner already uploaded a file with this content hash?
+ *
+ * The client hashes the file locally (SubtleCrypto) before uploading, so a
+ * duplicate can be pointed out *before* spending the bandwidth. Scoped to the
+ * owner: knowing whether some other account holds the same bytes is not
+ * information a user should be able to probe for.
+ */
+async function findDuplicate({ user, checksum }) {
+  const hash = String(checksum || "").toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(hash)) {
+    throw ApiError.unprocessable("checksum must be a hex SHA-256 digest", {
+      details: [{ field: "checksum", message: "Expected 64 hex characters" }],
+    });
+  }
+
+  const match = await db.documents.findOne({ ownerId: user.id, checksum: hash });
+  if (!match) return { duplicate: false };
+
+  return {
+    duplicate: true,
+    document: {
+      id: match.id,
+      title: match.title,
+      originalName: match.originalName,
+      sizeLabel: formatBytes(match.size),
+      status: match.status,
+      createdAt: match.createdAt,
+    },
+  };
+}
+
 /** Distinct tags across everything the caller can see — powers the filter bar. */
 async function tagsFor(user) {
   const filter = await buildListFilter({ user, query: { scope: "all" } });
@@ -605,5 +780,7 @@ module.exports = {
   quotaBytesFor,
   assertWithinQuota,
   accessibleClause,
+  bulk,
+  findDuplicate,
   VISIBILITIES,
 };

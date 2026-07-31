@@ -17,12 +17,14 @@ import {
 } from "./ui";
 import FileGlyph from "./FileGlyph";
 import DocumentPreview from "./DocumentPreview";
+import CommentsPanel from "./CommentsPanel";
 import { Icon } from "../lib/icons";
 import { api } from "../lib/api";
 import { useToast } from "../context/ToastContext";
 import { useFocusTrap } from "../lib/useFocusTrap";
 import {
   categoryLabel,
+  copyText,
   formatBytes,
   formatDate,
   formatNumber,
@@ -263,6 +265,7 @@ export default function DocumentDrawer({ documentId, onClose, onChanged, onShare
             tabs={[
               { value: "overview", label: "Overview" },
               { value: "preview", label: "Preview" },
+              { value: "comments", label: "Discussion" },
               { value: "versions", label: "Versions", count: detail.versions.length },
               { value: "activity", label: "Activity" },
             ]}
@@ -403,6 +406,10 @@ export default function DocumentDrawer({ documentId, onClose, onChanged, onShare
             <DocumentPreview document={doc} version={selectedVersion} />
           ) : null}
 
+          {tab === "comments" ? (
+            <CommentsPanel documentId={doc.id} canModerate={doc.permissions.canManage} />
+          ) : null}
+
           {tab === "versions" ? (
             <div className="col gap-4">
               {doc.permissions.canEdit ? (
@@ -535,6 +542,20 @@ export default function DocumentDrawer({ documentId, onClose, onChanged, onShare
               Share
             </Button>
           ) : null}
+
+          {/* A direct link to this document. It grants nothing on its own — the
+              recipient still needs access — but "which document?" is otherwise
+              impossible to say precisely. */}
+          <IconButton
+            icon="link"
+            label="Copy a link to this document"
+            onClick={async () => {
+              const url = `${window.location.origin}/documents/${doc.id}`;
+              (await copyText(url))
+                ? toast.success("Link copied", "Anyone with access can open it.")
+                : toast.error("Could not copy", url);
+            }}
+          />
 
           {doc.status === "trashed" ? (
             <>

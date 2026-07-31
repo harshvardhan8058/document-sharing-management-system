@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { matchPath, normalizeTo } from "./paths";
+import { withViewTransition } from "./useMotion";
 
 /**
  * A ~150 line client-side router.
@@ -35,17 +36,28 @@ export function Router({ children }) {
     return () => window.removeEventListener("popstate", sync);
   }, []);
 
-  const navigate = useCallback((to, { replace = false, state = null } = {}) => {
+  const navigate = useCallback((to, { replace = false, state = null, transition = true } = {}) => {
     const target = normalizeTo(to);
     const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
 
     if (target === current && !replace) return;
 
-    window.history[replace ? "replaceState" : "pushState"](state, "", target);
-    setLocation(readLocation());
+    const commit = () => {
+      window.history[replace ? "replaceState" : "pushState"](state, "", target);
+      setLocation(readLocation());
 
-    // Mirror the browser's behaviour on a fresh page load.
-    if (!target.includes("#")) window.scrollTo({ top: 0, behavior: "instant" });
+      // Mirror the browser's behaviour on a fresh page load.
+      if (!target.includes("#")) window.scrollTo({ top: 0, behavior: "instant" });
+    };
+
+    /**
+     * Cross-fade the route change where the browser supports it. Skipped for
+     * same-page query updates (filtering a list should not flash the whole
+     * page) and, inside withViewTransition, for reduced-motion users.
+     */
+    const samePage = target.split("?")[0] === current.split("?")[0];
+    if (transition && !samePage) withViewTransition(commit);
+    else commit();
   }, []);
 
   const value = useMemo(() => ({ location, navigate }), [location, navigate]);

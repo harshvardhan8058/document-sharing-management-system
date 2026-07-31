@@ -94,9 +94,17 @@ export const Input = forwardRef(function Input({ error, icon, action, className 
   );
 });
 
-export const Textarea = ({ error, className = "", ...rest }) => (
-  <textarea className={`textarea ${className}`} aria-invalid={error ? "true" : undefined} {...rest} />
-);
+/** forwardRef so callers can focus it (e.g. the reply button in a comment thread). */
+export const Textarea = forwardRef(function Textarea({ error, className = "", ...rest }, ref) {
+  return (
+    <textarea
+      ref={ref}
+      className={`textarea ${className}`}
+      aria-invalid={error ? "true" : undefined}
+      {...rest}
+    />
+  );
+});
 
 export const Select = ({ className = "", children, ...rest }) => (
   <select className={`select ${className}`} {...rest}>
