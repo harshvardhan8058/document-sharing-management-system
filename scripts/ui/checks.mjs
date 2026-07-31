@@ -209,7 +209,7 @@ export async function runChecks({ page, base, report, shot }) {
   // happens to be first only tests this if that card is one of the selected ones,
   // and a failure would look like a product bug rather than a bad test.
   const dragged = chosenIds[0];
-  const dropDiagnostics = await page.eval(`
+  const dropReport = await page.eval(`
     const card = document.querySelector('[data-doc-id="${dragged}"]');
     const target = [...document.querySelectorAll('aside a, aside button, aside li')]
       .find((el) => /quarterly review/i.test(el.innerText || ''));
@@ -222,21 +222,51 @@ export async function runChecks({ page, base, report, shot }) {
     const scope = document.querySelector('[data-drop-scope]')?.dataset.dropScope ?? 'absent';
     target.dispatchEvent(new DragEvent('dragover', { dataTransfer: transfer, bubbles: true, cancelable: true }));
     target.dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true }));
-    return 'payload=' + payload + ' scope=' + scope;
+    return JSON.stringify({ payload, scope });
   `);
-  const filed = await page.waitFor(
-    `
-      const list = await fetch('/api/collections', { headers: { Authorization: 'Bearer ' + localStorage['dsms.token'] } }).then(r => r.json());
-      const target = list.collections.find((c) => /quarterly review/i.test(c.name));
-      const count = target.documentCount ?? target.count;
-      return count ? count + '/' + list.unfiled : false;
-    `,
-    { label: "the drop to be filed" }
+  const dropDetail = typeof dropReport === "string" && dropReport.startsWith("{") ? JSON.parse(dropReport) : { payload: dropReport, scope: "?" };
+
+  // The drag must be self-contained: whether the drop applies to three documents
+  // cannot depend on the sidebar's view of the selection being current, which is
+  // what made this timing-dependent in the first place.
+  let carried = [];
+  try {
+    carried = JSON.parse(dropDetail.payload);
+  } catch {
+    carried = [];
+  }
+  check(
+    "the drag itself carries the whole selection",
+    Array.isArray(carried) && carried.length === picked,
+    `payload had ${carried.length} id(s)`
   );
+  /*
+   * Wait for the *expected* count, not for "any progress".
+   *
+   * The server files documents one at a time, so a poll that accepts the first
+   * non-zero count observes a partially applied drop and reports it as the final
+   * answer. That is exactly what happened: this read "1 of 3 filed" as a failure
+   * on a slower machine while the remaining two writes were still in flight.
+   */
+  const readFiled = `
+    const list = await fetch('/api/collections', { headers: { Authorization: 'Bearer ' + localStorage['dsms.token'] } }).then(r => r.json());
+    const target = list.collections.find((c) => /quarterly review/i.test(c.name));
+    const count = (target?.documentCount ?? target?.count) || 0;
+    return count + '/' + list.unfiled;
+  `;
+  let filed = "0/?";
+  try {
+    filed = await page.waitFor(
+      `${readFiled.replace("return count + '/' + list.unfiled;", `return count === ${picked} ? count + '/' + list.unfiled : false;`)}`,
+      { label: `all ${picked} documents to be filed` }
+    );
+  } catch {
+    filed = await page.eval(readFiled);
+  }
   check(
     "dragging one card of a three-document selection files all three",
     filed.startsWith("3/"),
-    `filed/unfiled = ${filed} · dragged ${dragged} · ${dropDiagnostics}`
+    `filed/unfiled = ${filed} · dragged ${dragged} · payload=${dropDetail.payload} · scope=${dropDetail.scope}`
   );
   await shot("07-collections");
 

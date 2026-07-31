@@ -206,7 +206,11 @@ export default function Dashboard() {
           </div>
           <div className="panel__body col gap-5 center" style={{ alignItems: "center" }}>
             <StorageRing
-              percent={storage.usedPercent}
+              /* Derived from the bytes rather than from `usedPercent`, which the
+                 API rounds to one decimal — so a real 2.6 KB inside a 2 GB quota
+                 arrives as exactly 0 and the gauge cannot tell "empty" from
+                 "barely used". */
+              percent={storage.quotaBytes ? (storage.usedBytes / storage.quotaBytes) * 100 : 0}
               usedLabel={storage.usedLabel}
               quotaLabel={storage.quotaLabel}
               tone={tone}

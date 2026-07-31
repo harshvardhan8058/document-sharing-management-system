@@ -3,6 +3,7 @@ import { Badge, Chip, IconButton } from "./ui";
 import { Icon } from "../lib/icons";
 import { relativeTime, visibilityLabel, formatNumber } from "../lib/format";
 import { usePointerSpotlight } from "../lib/useMotion";
+import { DOCUMENT_DRAG_TYPE } from "../lib/dragPayload";
 
 /**
  * Highlight the matched term inside a content snippet.
@@ -49,6 +50,9 @@ export function DocumentCard({
   onToggleSelect,
   onDragStart,
   onDragEnd,
+  /** Every id this drag should apply to — the selection when this card is part
+      of one, otherwise just this card. */
+  dragIds,
   matchSnippet,
   focused = false,
 }) {
@@ -70,9 +74,25 @@ export function DocumentCard({
       draggable
       onDragStart={(event) => {
         event.dataTransfer.effectAllowed = "move";
-        // Plain text so a drop outside the app degrades to the title.
-        event.dataTransfer.setData("text/plain", doc.title);
-        event.dataTransfer.setData("application/x-dsms-documents", JSON.stringify([doc.id]));
+
+        /*
+         * The drag carries the entire selection, decided here at the moment the
+         * drag begins.
+         *
+         * Sending only this card's id and having the drop site reconcile it
+         * against the selection meant the outcome depended on React state in a
+         * different component being current at the instant of the drop. That is
+         * a race, and it lost on a slower machine: the sidebar reported three
+         * documents selected while the drop applied to one. A drag is a snapshot
+         * by nature, which is what `DataTransfer` is for.
+         */
+        const ids = dragIds?.length ? dragIds : [doc.id];
+        event.dataTransfer.setData(DOCUMENT_DRAG_TYPE, JSON.stringify(ids));
+        // Plain text so a drop outside the app degrades to something readable.
+        event.dataTransfer.setData(
+          "text/plain",
+          ids.length > 1 ? `${ids.length} documents` : doc.title
+        );
         event.currentTarget.classList.add("dragging");
         onDragStart?.(doc);
       }}
