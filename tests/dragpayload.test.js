@@ -80,3 +80,20 @@ test("the drag MIME type is specific to this app", () => {
   // A generic type would let any dragged text look like a document drop.
   assert.match(DOCUMENT_DRAG_TYPE, /^application\/x-dsms-/);
 });
+
+
+test("a payload that already carries the selection needs no reconciliation", () => {
+  const { resolveDropIds } = dragPayload;
+
+  /*
+   * The drag now snapshots the selection at dragstart, so the common case is a
+   * multi-id payload arriving at a drop site that knows nothing about the
+   * selection. This must not depend on the second argument at all: relying on
+   * the drop site's view of the selection is what made the outcome
+   * timing-dependent, filing one document out of three on a slower machine.
+   */
+  assert.deepEqual(resolveDropIds(payload(["a", "b", "c"]), []), ["a", "b", "c"]);
+  assert.deepEqual(resolveDropIds(payload(["a", "b", "c"])), ["a", "b", "c"]);
+  // Even a stale or contradictory selection cannot shrink an explicit payload.
+  assert.deepEqual(resolveDropIds(payload(["a", "b", "c"]), ["q"]), ["a", "b", "c"]);
+});

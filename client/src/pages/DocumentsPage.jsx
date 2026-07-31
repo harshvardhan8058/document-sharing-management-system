@@ -669,6 +669,10 @@ export default function DocumentsPage({ scope = "all" }) {
                     selected={selection.isSelected(doc.id)}
                     selectionMode={selection.active}
                     onToggleSelect={(target) => selection.toggle(target.id)}
+                    /* Dragging a card that is part of a selection drags the
+                       whole selection. Decided here, where the selection lives,
+                       and carried on the drag itself. */
+                    dragIds={selection.isSelected(doc.id) ? selection.selectedIds : [doc.id]}
                     matchSnippet={doc.matchExcerpt}
                   />
                 )
