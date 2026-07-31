@@ -7,13 +7,14 @@ import { useWorkspace } from "../context/WorkspaceContext";
 import { useToast } from "../context/ToastContext";
 import { useTheme } from "../context/ThemeContext";
 import { useDocumentDrop } from "../lib/useDocumentDrop";
-import { formatNumber, modifierKeyLabel, usageTone } from "../lib/format";
+import { formatNumber, formatUsagePercent, modifierKeyLabel, usageTone } from "../lib/format";
 import UploadDialog from "./UploadDialog";
 import ShareDialog from "./ShareDialog";
 import DocumentDrawer from "./DocumentDrawer";
 import CommandPalette from "./CommandPalette";
 import NotificationCenter from "./NotificationCenter";
 import CollectionsNav from "./CollectionsNav";
+import ShortcutSheet from "./ShortcutSheet";
 
 const ShellContext = createContext(null);
 
@@ -51,6 +52,7 @@ export default function AppShell({ children }) {
   const [droppedFiles, setDroppedFiles] = useState([]);
   const [shareTarget, setShareTarget] = useState(null);
   const [drawerId, setDrawerId] = useState(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [search, setSearch] = useState("");
 
   // Dropping a file anywhere in the window opens the uploader pre-filled.
@@ -107,6 +109,10 @@ export default function AppShell({ children }) {
       if (event.key === "/") {
         event.preventDefault();
         searchRef.current?.focus();
+      } else if (event.key === "?") {
+        // The keyboard model is useless if nothing announces it.
+        event.preventDefault();
+        setShortcutsOpen((open) => !open);
       } else if (event.key.toLowerCase() === "u" && !event.metaKey && !event.ctrlKey && !event.altKey) {
         event.preventDefault();
         openUpload();
@@ -236,7 +242,13 @@ export default function AppShell({ children }) {
               <div className="storage-card">
                 <div className="row between text-xs">
                   <span className="dim">Storage</span>
-                  <span className="nums semi">{storage.usedPercent}%</span>
+                  {/* Same rule as the dashboard gauge, so the two never disagree
+                      about whether a nearly empty quota is "0%" or "<0.1%". */}
+                  <span className="nums semi">
+                    {formatUsagePercent(
+                      storage.quotaBytes ? (storage.usedBytes / storage.quotaBytes) * 100 : 0
+                    )}
+                  </span>
                 </div>
                 <Progress value={storage.usedPercent} tone={tone} />
                 <div className="text-xs dim nums">
@@ -305,6 +317,20 @@ export default function AppShell({ children }) {
                   <span className="kbd">K</span>
                 </span>
               </Button>
+
+              {/* A keyboard-first interface has to advertise itself somewhere a
+                  mouse can reach, or only the people who already knew will find
+                  the shortcuts. */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShortcutsOpen(true)}
+                aria-label="Keyboard shortcuts"
+                title="Keyboard shortcuts (?)"
+                className="only-desktop"
+              >
+                <span className="kbd">?</span>
+              </Button>
               <NotificationCenter onOpenDocument={openDocument} />
               <IconButton
                 icon={isDark ? "sun" : "moon"}
@@ -362,6 +388,8 @@ export default function AppShell({ children }) {
           onShare={openShare}
         />
       ) : null}
+
+      <ShortcutSheet open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
       <CommandPalette
         open={paletteOpen}

@@ -1,21 +1,69 @@
 import { useEffect, useRef, useState } from "react";
-import { categoryColor, categoryLabel, formatBytes, formatDayLabel, formatNumber } from "../lib/format";
+import {
+  categoryColor,
+  categoryLabel,
+  formatBytes,
+  formatDayLabel,
+  formatNumber,
+  formatUsagePercent,
+} from "../lib/format";
 
 /* ==========================================================================
    Charts — hand-drawn SVG/CSS, no charting dependency.
    Each one degrades to a readable empty state rather than an empty box.
    ========================================================================== */
 
-/** Smooth area sparkline. Used behind metric tiles. */
+/**
+ * Smooth area sparkline. Used behind metric tiles.
+ *
+ * Sparse data is the normal case for a new instance, and it is where sparklines
+ * lie: a fortnight of zeroes with one upload becomes a flat line and a cliff,
+ * which reads as a rendering fault rather than as "one thing happened". A series
+ * with no variation is therefore drawn as a deliberate flat baseline, and a
+ * single data point gets a marker instead of a slope.
+ */
 export function Sparkline({ points = [], color = "#67e8f9", height = 44, fill = true }) {
   const values = points.map((point) => (typeof point === "number" ? point : point.count || 0));
   if (values.length < 2) return null;
 
-  const max = Math.max(...values, 1);
   const width = 100;
   const step = width / (values.length - 1);
+  // Breathing room top and bottom: at full height the stroke is clipped by the
+  // viewBox and the peak looks cut off.
+  const padding = 3;
+  const usable = height - padding * 2;
 
-  const coords = values.map((value, index) => [index * step, height - (value / max) * (height - 4) - 2]);
+  const max = Math.max(...values, 1);
+  const nonZero = values.filter((value) => value > 0);
+  const flat = new Set(values).size === 1;
+
+  if (flat) {
+    // Honest "nothing to show": a resting line, no fill, no implied trend.
+    const y = height - padding;
+    return (
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
+        style={{ width: "100%", height }}
+        aria-hidden="true"
+      >
+        <path
+          d={`M 0 ${y} L ${width} ${y}`}
+          fill="none"
+          stroke={color}
+          strokeOpacity="0.32"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
+
+  const coords = values.map((value, index) => [index * step, padding + usable - (value / max) * usable]);
+
+  // One lonely reading: a slope between zero and it implies a trend that does
+  // not exist, so mark the point.
+  const single = nonZero.length === 1 ? coords[values.findIndex((value) => value > 0)] : null;
 
   // Cardinal-ish smoothing: pull each segment through the midpoint of its neighbours.
   const path = coords.reduce((acc, [x, y], index) => {
@@ -44,6 +92,7 @@ export function Sparkline({ points = [], color = "#67e8f9", height = 44, fill = 
         <path d={`${path} L ${width} ${height} L 0 ${height} Z`} fill={`url(#${gradientId})`} stroke="none" />
       ) : null}
       <path d={path} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+      {single ? <circle cx={single[0]} cy={single[1]} r="2.4" fill={color} vectorEffect="non-scaling-stroke" /> : null}
     </svg>
   );
 }
@@ -74,22 +123,33 @@ export function DayBars({ data = [] }) {
         </span>
       </div>
 
+      {/* Peak label, so a lone tall bar has a scale and does not read as "all of
+          the activity" without a number attached to it. */}
+      <div className="row between text-xs dim">
+        <span className="nums">{total ? `peak ${formatNumber(max)}/day` : ""}</span>
+      </div>
+
       <div className="bars relative" onMouseLeave={() => setHovered(null)}>
         {data.map((day, index) => (
-          <button
-            type="button"
-            key={day.date}
-            className={`bars__col ${day.count === 0 ? "bars__col--empty" : ""}`}
-            style={{
-              height: `${Math.max(day.count === 0 ? 3 : 8, (day.count / max) * 100)}%`,
-              animationDelay: `${index * 22}ms`,
-              opacity: hovered === null || hovered === index ? 1 : 0.4,
-            }}
-            onMouseEnter={() => setHovered(index)}
-            onFocus={() => setHovered(index)}
-            onBlur={() => setHovered(null)}
-            aria-label={`${formatDayLabel(day.date)}: ${day.count} file${day.count === 1 ? "" : "s"}, ${formatBytes(day.bytes)}`}
-          />
+          /* Every day is a full-height slot with the bar inside it. Sizing the
+             button itself left empty days as 3%-high stubs floating on the
+             baseline, which looked like a broken chart rather than a quiet
+             fortnight — and gave those days almost no hit area to hover. */
+          <span key={day.date} className="bars__slot">
+            <button
+              type="button"
+              className={`bars__col ${day.count === 0 ? "bars__col--empty" : ""}`}
+              style={{
+                height: day.count === 0 ? "2px" : `${Math.max(6, (day.count / max) * 100)}%`,
+                animationDelay: `${index * 22}ms`,
+                opacity: hovered === null || hovered === index ? 1 : 0.45,
+              }}
+              onMouseEnter={() => setHovered(index)}
+              onFocus={() => setHovered(index)}
+              onBlur={() => setHovered(null)}
+              aria-label={`${formatDayLabel(day.date)}: ${day.count} file${day.count === 1 ? "" : "s"}, ${formatBytes(day.bytes)}`}
+            />
+          </span>
         ))}
 
         {active ? (
@@ -164,9 +224,10 @@ export function StorageRing({ percent = 0, usedLabel, quotaLabel, size = 148, to
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="var(--surface-2)"
+          stroke="var(--chart-ring-track)"
           strokeWidth={stroke}
         />
+        {/* A gauge with nothing in it still has to look like a gauge. */}
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -180,7 +241,9 @@ export function StorageRing({ percent = 0, usedLabel, quotaLabel, size = 148, to
         />
       </svg>
       <div className="ring__label">
-        <div className="ring__value">{shown.toFixed(shown < 10 ? 1 : 0)}%</div>
+        {/* "0.0%" for a real 2.6 KB reads as a broken number. Anything present
+            but below a tenth of a percent is shown as such. */}
+        <div className="ring__value">{formatUsagePercent(percent, shown)}</div>
         <div className="ring__unit">
           {usedLabel}
           {quotaLabel ? ` of ${quotaLabel}` : ""}

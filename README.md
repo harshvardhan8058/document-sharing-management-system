@@ -112,8 +112,21 @@ selects the page.
 Every animation is wrapped in a `prefers-reduced-motion` check and collapses to its final state —
 motion is decoration, and the interface is complete without it.
 
+**States are designed, not left to chance.** Changing scope or filters clears the list and shows
+placeholders shaped like the view you are in; re-running the *same* query keeps its results on screen,
+because that is what makes a background refresh unobtrusive. Empty results explain which filter caused
+them and offer to clear it, and a failed load offers to retry rather than showing an empty page.
+
+**Charts tell the truth about sparse data.** A new instance has almost none, which is exactly where
+charts mislead: a fortnight of zeroes with one upload drawn as a line becomes a flat run and a cliff
+that reads as a rendering fault. A series with no variation is drawn as a deliberate resting line, a
+lone reading gets a marker instead of a slope, every day in the bar chart is a slot so an empty day
+looks empty rather than tiny, and the storage gauge reports `<0.1%` instead of `0.0%` when a real
+2.6 KB sits in a 2 GB quota.
+
 | Key | |
 | --- | --- |
+| `?` | **Every shortcut, listed** — the same sheet the header's `?` button opens |
 | `⌘/Ctrl K` | Command palette — navigate, search, switch theme, upload |
 | `/` | Focus search |
 | `U` | Upload |

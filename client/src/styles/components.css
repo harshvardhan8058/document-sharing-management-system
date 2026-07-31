@@ -712,6 +712,25 @@ button.chip:hover {
   height: 132px;
 }
 
+/* One slot per day, full height, holding the bar at its base.
+   The slot gives every day the same generous hit area regardless of its value,
+   and its faint track makes an empty day legible as "a day with nothing in it"
+   rather than as a stray dash near the axis. */
+.bars__slot {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  flex: 1;
+  min-width: 4px;
+  height: 100%;
+  border-radius: var(--r-xs);
+  background: linear-gradient(180deg, transparent 0%, var(--chart-track) 100%);
+}
+
+.bars__slot:hover {
+  background: linear-gradient(180deg, transparent 0%, var(--chart-track-hover) 100%);
+}
+
 .bars__col {
   position: relative;
   flex: 1;
@@ -728,8 +747,12 @@ button.chip:hover {
   transform: scaleX(1.15);
 }
 
+/* A day with no uploads: a flat tick on the axis, not a short bar. A short bar
+   implies a small value; a tick reads as zero. */
 .bars__col--empty {
-  background: var(--surface-2);
+  background: var(--line-strong);
+  border-radius: 2px;
+  animation: none;
 }
 
 @keyframes grow-bar {
@@ -1957,4 +1980,47 @@ button.chip:hover {
 .toast__action:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+
+/* -- keyboard shortcut sheet ---------------------------------------------- */
+
+.shortcut-grid {
+  display: grid;
+  gap: var(--space-5);
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.shortcut-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+
+/* Label left, keys right, with the keys column aligned across every row so the
+   list can be scanned by shape rather than read line by line. */
+.shortcut-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 7px 9px;
+  border-radius: var(--r-sm);
+}
+
+.shortcut-row:nth-child(odd) {
+  background: var(--sunken);
+}
+
+.shortcut-row dd {
+  margin: 0;
+}
+
+/* Arrow glyphs are absent from plenty of monospace faces, where they land as
+   tofu. The interface font carries them. */
+.kbd--glyph {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1;
 }

@@ -1,5 +1,24 @@
 /** Presentation helpers. Pure functions, no React. */
 
+/**
+ * Label for a usage gauge that is animating from 0 up to `target`.
+ *
+ * Rounding is the whole problem: 2.6 KB inside a 2 GB quota really is 0.0001%,
+ * and printing "0.0%" invites the reader to decide the number is broken rather
+ * than tiny. Anything present but under a tenth of a percent is reported as
+ * such, and only a genuinely empty quota shows a flat zero.
+ *
+ * @param {number} target   the real percentage, 0–100
+ * @param {number} animated the value currently being displayed mid-animation
+ */
+export function formatUsagePercent(target, animated = target) {
+  if (!Number.isFinite(target) || target <= 0) return "0%";
+  if (target < 0.1) return "<0.1%";
+
+  const shown = Number.isFinite(animated) ? Math.max(0, Math.min(target, animated)) : target;
+  return `${shown.toFixed(shown < 10 ? 1 : 0)}%`;
+}
+
 export function formatBytes(bytes = 0) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];

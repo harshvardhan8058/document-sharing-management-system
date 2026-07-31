@@ -52,6 +52,13 @@
   --sunken: rgba(4, 6, 16, 0.34);
   --sunken-strong: rgba(4, 6, 16, 0.55);
 
+  /* Chart furniture: the parts of a chart that are not data. Separate tokens
+     because `--surface-2` is nearly invisible against a panel, which left the
+     storage ring with no track and a 0% reading looking like a failed render. */
+  --chart-track: rgba(126, 156, 255, 0.09);
+  --chart-track-hover: rgba(126, 156, 255, 0.16);
+  --chart-ring-track: rgba(126, 156, 255, 0.18);
+
   /* -- elevation --------------------------------------------------------- */
   --shadow-sm: 0 1px 2px rgba(2, 4, 12, 0.5);
   --shadow-md: 0 12px 32px -12px rgba(2, 4, 14, 0.85);
@@ -137,6 +144,10 @@
 
   --sunken: rgba(226, 233, 248, 0.68);
   --sunken-strong: rgba(255, 255, 255, 0.9);
+
+  --chart-track: rgba(37, 61, 122, 0.08);
+  --chart-track-hover: rgba(37, 61, 122, 0.14);
+  --chart-ring-track: rgba(37, 61, 122, 0.16);
 
   --shadow-md: 0 12px 30px -14px rgba(24, 40, 84, 0.28);
   --shadow-lg: 0 30px 60px -26px rgba(24, 40, 84, 0.32);

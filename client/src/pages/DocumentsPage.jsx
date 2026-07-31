@@ -160,8 +160,30 @@ export default function DocumentsPage({ scope = "all" }) {
     return () => clearTimeout(timer);
   }, [searchDraft, search, params, setParams]);
 
+  /**
+   * Identity of the current query. Two loads with the same key are the same
+   * question asked twice; a different key is a different question.
+   */
+  const queryKey = useMemo(
+    () =>
+      JSON.stringify({ scope, search, category, tag, visibility, sort, page, collectionId, inContent }),
+    [scope, search, category, tag, visibility, sort, page, collectionId, inContent]
+  );
+  const loadedKey = useRef(null);
+
   const load = useCallback(async () => {
-    setState((current) => ({ ...current, status: current.meta ? "refreshing" : "loading" }));
+    /*
+     * Re-running the same query keeps its results on screen — that is what makes
+     * a background refresh unobtrusive. A *different* query must clear them,
+     * because otherwise the previous scope's documents sit under the new
+     * heading: clicking "Starred" showed five unstarred documents until the
+     * fetch landed, with nothing on screen to say it was still loading.
+     */
+    setState((current) =>
+      loadedKey.current === queryKey && current.meta
+        ? { ...current, status: "refreshing" }
+        : { status: "loading", documents: [], meta: null, facets: current.facets }
+    );
     try {
       const payload = await api.documents.list({
         scope,
@@ -175,11 +197,13 @@ export default function DocumentsPage({ scope = "all" }) {
         inContent: inContent || undefined,
         limit: 24,
       });
+      loadedKey.current = queryKey;
       setState({ status: "ready", ...payload });
     } catch (error) {
+      loadedKey.current = null;
       setState({ status: "error", error, documents: [], meta: null, facets: null });
     }
-  }, [scope, search, category, tag, visibility, sort, page, collectionId, inContent]);
+  }, [queryKey, scope, search, category, tag, visibility, sort, page, collectionId, inContent]);
 
   useEffect(() => {
     load();
@@ -589,22 +613,40 @@ export default function DocumentsPage({ scope = "all" }) {
         </Alert>
       ) : null}
 
+      {/* Placeholders mirror the view you are actually in, so switching scope
+          does not also change the shape of the page under you. */}
       {state.status === "loading" ? (
-        <div className="grid-docs">
-          {Array.from({ length: 8 }, (_, index) => (
-            <div key={index} className="panel doc-card">
-              <div className="row gap-3">
-                <Skeleton height={42} width={42} radius={9} />
-                <div className="grow col gap-2">
-                  <Skeleton height={14} width="80%" />
-                  <Skeleton height={11} width="45%" />
+        view === "grid" ? (
+          <div className="grid-docs" aria-busy="true" aria-label="Loading documents">
+            {Array.from({ length: 8 }, (_, index) => (
+              <div key={index} className="panel doc-card">
+                <div className="row gap-3">
+                  <Skeleton height={42} width={42} radius={9} />
+                  <div className="grow col gap-2">
+                    <Skeleton height={14} width="80%" />
+                    <Skeleton height={11} width="45%" />
+                  </div>
                 </div>
+                <Skeleton height={11} />
+                <Skeleton height={11} width="70%" />
               </div>
-              <Skeleton height={11} />
-              <Skeleton height={11} width="70%" />
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div className="col gap-2" aria-busy="true" aria-label="Loading documents">
+            {Array.from({ length: 8 }, (_, index) => (
+              <div key={index} className="panel row gap-3 items-center" style={{ padding: "14px 16px" }}>
+                <Skeleton height={34} width={34} radius={9} />
+                <div className="grow col gap-2">
+                  <Skeleton height={13} width={`${58 - (index % 3) * 9}%`} />
+                  <Skeleton height={10} width="26%" />
+                </div>
+                <Skeleton height={10} width={64} />
+                <Skeleton height={22} width={70} radius={999} />
+              </div>
+            ))}
+          </div>
+        )
       ) : null}
 
       {state.status !== "loading" && state.status !== "error" ? (
