@@ -223,7 +223,7 @@
 /* A collection in the sidebar that a document is hovering over. */
 .drop-target--over {
   background: rgba(103, 232, 249, 0.14) !important;
-  outline: 1.5px dashed var(--accent);
+  outline: 1.5px dashed var(--focus-ring);
   outline-offset: -3px;
 }
 
@@ -304,7 +304,7 @@
 }
 
 .bars__col:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 

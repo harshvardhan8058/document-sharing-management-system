@@ -216,8 +216,29 @@ export function DocumentCard({
   );
 }
 
-/** Dense row layout — the list view. */
-export function DocumentRow({ document: doc, onOpen, onToggleStar, onDownload, onShare }) {
+/**
+ * A row in the table view.
+ *
+ * Reaches parity with the grid deliberately: selectable, draggable, and able to
+ * show the keyboard cursor. Before this, the list view was cards laid out in a
+ * column — you could not select anything in it, so the bulk bar was unreachable
+ * for anyone who preferred a dense view, and the arrow-key cursor moved through
+ * rows invisibly.
+ */
+export function DocumentRow({
+  document: doc,
+  onOpen,
+  onToggleStar,
+  onDownload,
+  onShare,
+  selected = false,
+  selectionMode = false,
+  onToggleSelect,
+  dragIds,
+  onDragStart,
+  onDragEnd,
+  focused = false,
+}) {
   const stop = (handler) => (event) => {
     event.stopPropagation();
     handler?.();
@@ -225,21 +246,52 @@ export function DocumentRow({ document: doc, onOpen, onToggleStar, onDownload, o
 
   return (
     <div
-      className="doc-row"
-      role="button"
+      className={`doc-row selectable drag-source ${selected ? "selected" : ""} ${focused ? "card-focused" : ""}`}
+      role="row"
       tabIndex={0}
-      onClick={() => onOpen?.(doc)}
+      data-doc-id={doc.id}
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = "move";
+        const ids = dragIds?.length ? dragIds : [doc.id];
+        event.dataTransfer.setData(DOCUMENT_DRAG_TYPE, JSON.stringify(ids));
+        event.dataTransfer.setData("text/plain", ids.length > 1 ? `${ids.length} documents` : doc.title);
+        event.currentTarget.classList.add("dragging");
+        onDragStart?.(doc);
+      }}
+      onDragEnd={(event) => {
+        event.currentTarget.classList.remove("dragging");
+        onDragEnd?.(doc);
+      }}
+      onClick={(event) => {
+        if (selectionMode || event.metaKey || event.ctrlKey) {
+          event.preventDefault();
+          onToggleSelect?.(doc);
+          return;
+        }
+        onOpen?.(doc);
+      }}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onOpen?.(doc);
         }
       }}
+      aria-selected={selected}
       aria-label={`Open ${doc.title}`}
     >
-      <FileGlyph category={doc.file.category} extension={doc.file.extension} size="sm" />
+      <span className="doc-row__pick" role="cell">
+        <input
+          type="checkbox"
+          checked={selected}
+          onClick={(event) => event.stopPropagation()}
+          onChange={stop(() => onToggleSelect?.(doc))}
+          aria-label={`Select ${doc.title}`}
+        />
+        <FileGlyph category={doc.file.category} extension={doc.file.extension} size="sm" />
+      </span>
 
-      <div className="doc-row__name">
+      <div className="doc-row__name" role="cell">
         <div className="doc-row__title">
           {doc.isStarred ? (
             <Icon name="star" size={12} strokeWidth={2} className="warning" style={{ display: "inline" }} />
@@ -249,15 +301,27 @@ export function DocumentRow({ document: doc, onOpen, onToggleStar, onDownload, o
         <div className="doc-row__meta">{doc.description || doc.file.originalName}</div>
       </div>
 
-      <div className="doc-row__meta doc-row__hide-sm">
+      <div className="doc-row__meta doc-row__hide-sm" role="cell">
         {doc.isOwner ? "You" : doc.ownerName || "—"}
       </div>
 
-      <div className="doc-row__meta doc-row__hide-sm nums">{doc.file.sizeLabel}</div>
+      {/* Right-aligned and tabular: sizes and counts are compared down a column,
+          which ragged left edges make impossible. */}
+      <div className="doc-row__meta doc-row__hide-sm nums text-right" role="cell">
+        {doc.file.sizeLabel}
+      </div>
 
-      <div className="doc-row__meta doc-row__hide-sm">{relativeTime(doc.updatedAt)}</div>
+      <div className="doc-row__meta doc-row__hide-sm nums text-right" role="cell">
+        {formatNumber(doc.downloadCount ?? 0)}
+      </div>
 
-      <div className="doc-row__actions">
+      <div className="doc-row__meta doc-row__hide-sm" role="cell">
+        <time dateTime={doc.updatedAt} title={new Date(doc.updatedAt).toLocaleString()}>
+          {relativeTime(doc.updatedAt)}
+        </time>
+      </div>
+
+      <div className="doc-row__actions" role="cell">
         <IconButton
           icon="star"
           label={doc.isStarred ? "Remove star" : "Add star"}
@@ -275,15 +339,124 @@ export function DocumentRow({ document: doc, onOpen, onToggleStar, onDownload, o
 }
 
 /** Column headings for the list view. */
-export function DocumentRowHeader() {
+/**
+ * Which sort each column offers, descending first.
+ *
+ * Both directions for every sortable column: a header that only sorts one way
+ * has to do *something* on the second click, and quietly reverting to the
+ * default order looks like a bug.
+ */
+export const TABLE_COLUMNS = [
+  // `first` is the direction an unsorted column takes on its first click. Text
+  // starts at A–Z; sizes, counts and dates start at "most" or "newest", because
+  // that is the question people are asking when they click them.
+  { key: "name", label: "Name", asc: "name", desc: "name-desc", first: "asc", className: "" },
+  { key: "owner", label: "Owner", className: "doc-row__hide-sm" },
+  {
+    key: "size",
+    label: "Size",
+    asc: "smallest",
+    desc: "largest",
+    first: "desc",
+    className: "doc-row__hide-sm text-right",
+  },
+  {
+    key: "downloads",
+    label: "Downloads",
+    asc: "downloads-asc",
+    desc: "downloads",
+    first: "desc",
+    className: "doc-row__hide-sm text-right",
+  },
+  {
+    key: "updated",
+    label: "Updated",
+    asc: "updated-asc",
+    desc: "updated",
+    first: "desc",
+    className: "doc-row__hide-sm",
+  },
+];
+
+/**
+ * The table header.
+ *
+ * Was `aria-hidden` decoration. Now it is the sort control: each sortable column
+ * is a button carrying `aria-sort`, so the current order is announced rather than
+ * only drawn, and the same information is available to the keyboard.
+ */
+export function DocumentRowHeader({ sort, onSort, allSelected, someSelected, onToggleAll }) {
+  /**
+   * Which way this column is currently sorted, in the words `aria-sort` uses.
+   *
+   * Derived from the sort key rather than from the column's position in a pair:
+   * `name` is A–Z, which is *ascending*, and reporting it as "descending" is
+   * both wrong to a screen reader and points the caret the wrong way.
+   */
+  const directionFor = (column) => {
+    if (sort && sort === column.asc) return "ascending";
+    if (sort && sort === column.desc) return "descending";
+    return "none";
+  };
+
   return (
-    <div className="doc-row doc-row__head" aria-hidden="true">
-      <span />
-      <span>Name</span>
-      <span className="doc-row__hide-sm">Owner</span>
-      <span className="doc-row__hide-sm">Size</span>
-      <span className="doc-row__hide-sm">Updated</span>
-      <span />
+    <div className="doc-row doc-row__head" role="row">
+      <span className="doc-row__pick" role="columnheader">
+        {onToggleAll ? (
+          <input
+            type="checkbox"
+            checked={Boolean(allSelected)}
+            // Some-but-not-all is a third state, and a plain checked/unchecked
+            // box would misreport it.
+            ref={(node) => {
+              if (node) node.indeterminate = Boolean(someSelected) && !allSelected;
+            }}
+            onChange={() => onToggleAll()}
+            aria-label={allSelected ? "Clear selection" : "Select every document on this page"}
+          />
+        ) : null}
+      </span>
+
+      {TABLE_COLUMNS.map((column) => {
+        const direction = directionFor(column);
+        return (
+          <span
+            key={column.key}
+            className={column.className}
+            role="columnheader"
+            aria-sort={column.asc ? direction : undefined}
+          >
+            {column.asc && onSort ? (
+              <button
+                type="button"
+                className={`th-sort ${direction !== "none" ? "th-sort--on" : ""}`}
+                onClick={() => {
+                  // Clicking the active column flips it; an inactive one opens in
+                  // its natural first direction.
+                  if (direction === "ascending") onSort(column.desc);
+                  else if (direction === "descending") onSort(column.asc);
+                  else onSort(column.first === "asc" ? column.asc : column.desc);
+                }}
+                title={`Sort by ${column.label.toLowerCase()}`}
+              >
+                {column.label}
+                <Icon
+                  name={direction === "ascending" ? "chevronUp" : "chevronDown"}
+                  size={11}
+                  strokeWidth={2.5}
+                  className="th-sort__caret"
+                />
+              </button>
+            ) : (
+              column.label
+            )}
+          </span>
+        );
+      })}
+
+      <span role="columnheader">
+        <span className="sr-only">Actions</span>
+      </span>
     </div>
   );
 }

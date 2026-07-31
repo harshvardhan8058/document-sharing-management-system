@@ -112,6 +112,31 @@ selects the page.
 Every animation is wrapped in a `prefers-reduced-motion` check and collapses to its final state —
 motion is decoration, and the interface is complete without it.
 
+**The list view is a table.** Sortable columns with `aria-sort`, a sticky header, right-aligned tabular
+figures for sizes and counts, selection checkboxes, and the same keyboard cursor and drag behaviour as
+the grid. Every sortable column sorts both ways, because a header that only sorts one way has to do
+*something* on the second click. A **Comfortable / Compact** control changes row height — and card
+padding, and how many cards fit per row — through one set of custom properties, so the two views
+cannot drift apart. The choice is remembered.
+
+**Filters say what they are doing.** Each active filter is its own removable chip, so undoing one does
+not mean clearing all of them and starting again; clearing the filters leaves the sort order alone,
+because how you are ordering results is not a filter. Tag facets collapse past six rather than wrapping
+into a second row of identical-looking chips.
+
+**One search field.** There were two — one in the header that only acted on Enter and then jumped you
+to the library, and one inside the library that filtered as you typed. Same job, two behaviours, and
+the header one looked broken. Now there is one, it filters as you type from anywhere, and the term
+appears as a filter chip like any other.
+
+**Contrast is enforced, not reviewed.** `tests/contrast.test.js` computes WCAG ratios for every
+text-on-surface pair in *both* themes, reading the values out of `tokens.css` so it tracks the
+stylesheet rather than a copy of it. It found the light theme shipping a `TEAM` badge and file-type
+letters that had been coloured for a near-black panel — the worst measured **1.28:1** against its own
+tile, effectively invisible. Control boundaries and the focus ring are held to the 3:1 non-text
+threshold; decorative hairlines are exempt and documented as such, because forcing those to 3:1 would
+draw a box around everything on the page to satisfy a rule that was never about them.
+
 **States are designed, not left to chance.** Changing scope or filters clears the list and shows
 placeholders shaped like the view you are in; re-running the *same* query keeps its results on screen,
 because that is what makes a background refresh unobtrusive. Empty results explain which filter caused
@@ -266,7 +291,7 @@ npm run build        # install + build the client
 npm run seed         # demo accounts and documents (safe to re-run)
 npm test             # unit tests (node:test, no test framework dependency)
 npm run verify       # 140-check end-to-end API suite against a throwaway database
-npm run verify:ui    # 49-check interface suite in a real headless browser
+npm run verify:ui    # 68-check interface suite in a real headless browser
 npm run check        # all three
 ```
 
@@ -609,6 +634,16 @@ real answer behind more than one instance.
 they register, and pending grants are linked to the new account automatically — but nobody is
 *notified*. For the same reason there is no password-reset flow; an admin changing a quota or role
 is the only out-of-band recovery path.
+
+**Many visible tabs will still exhaust the connection budget over HTTP/1.1.** A browser opens at most
+six connections to one origin, and an open `EventSource` holds one of them for as long as it lives.
+Measured in a real browser: with five streams open to the same origin, ordinary requests stop being
+sent at all — every tab appears to hang. The stream is therefore dropped whenever a tab is hidden and
+reopened when it comes back, which covers the usual case of several tabs where only one is in front;
+notifications are persisted, so reconnecting re-reads the count and nothing is lost. Five *visible*
+tabs side by side would still hit it. The real answer is HTTP/2, which multiplexes all of them over a
+single connection, and which any production deployment behind nginx or a CDN already speaks — this
+makes HTTP/1.1 survivable rather than pretending it is solved.
 
 **The live stream is in-process.** Subscribers are held in one server's memory, so behind two replicas
 a user connected to node A never hears about an event raised on node B. The *notification itself* is
