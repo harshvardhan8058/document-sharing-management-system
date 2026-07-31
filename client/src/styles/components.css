@@ -116,7 +116,7 @@
 
 .btn:hover:not(:disabled) {
   transform: translateY(-1px);
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   box-shadow: var(--glow-accent);
 }
 
@@ -252,7 +252,7 @@
 
 .icon-btn--active {
   background: var(--surface-3);
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: var(--line-strong);
 }
 
@@ -294,7 +294,9 @@
   padding: 0 var(--space-4);
   height: 42px;
   background: var(--sunken-strong);
-  border: 1px solid var(--line);
+  /* A field's edge is what tells you it is a field, so it clears 3:1 rather than
+     using the decorative hairline. */
+  border: 1px solid var(--border-control);
   border-radius: var(--r-sm);
   color: var(--text);
   transition:
@@ -339,7 +341,7 @@
 .textarea:focus,
 .select:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   box-shadow: 0 0 0 3px rgba(103, 232, 249, 0.14);
 }
 
@@ -508,19 +510,22 @@
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  background: var(--surface-3);
-  color: var(--text-muted);
+  background: var(--badge-neutral-bg);
+  color: var(--badge-neutral-fg);
   border: 1px solid var(--line);
   white-space: nowrap;
 }
 
-.badge--private { background: rgba(126, 156, 255, 0.1); color: var(--text-muted); }
-.badge--internal { background: rgba(91, 140, 255, 0.16); color: #a8c4ff; border-color: rgba(91, 140, 255, 0.3); }
-.badge--public { background: rgba(52, 211, 153, 0.14); color: var(--mint); border-color: rgba(52, 211, 153, 0.3); }
-.badge--danger { background: rgba(251, 113, 133, 0.14); color: var(--rose); border-color: rgba(251, 113, 133, 0.3); }
-.badge--warning { background: rgba(251, 191, 36, 0.14); color: var(--amber); border-color: rgba(251, 191, 36, 0.3); }
-.badge--accent { background: rgba(103, 232, 249, 0.14); color: var(--cyan); border-color: rgba(103, 232, 249, 0.3); }
-.badge--violet { background: rgba(168, 85, 247, 0.16); color: #d8b4fe; border-color: rgba(168, 85, 247, 0.32); }
+/* Each variant is a foreground/tint pair from the tokens, so a theme flips both
+   together. Hardcoding the foreground here is what made "TEAM" unreadable on the
+   light theme. */
+.badge--private { background: var(--badge-neutral-bg); color: var(--badge-neutral-fg); }
+.badge--internal { background: var(--badge-info-bg); color: var(--badge-info-fg); border-color: rgba(91, 140, 255, 0.3); }
+.badge--public { background: var(--badge-success-bg); color: var(--badge-success-fg); border-color: rgba(52, 211, 153, 0.3); }
+.badge--danger { background: var(--badge-danger-bg); color: var(--badge-danger-fg); border-color: rgba(251, 113, 133, 0.3); }
+.badge--warning { background: var(--badge-warning-bg); color: var(--badge-warning-fg); border-color: rgba(251, 191, 36, 0.3); }
+.badge--accent { background: var(--badge-accent-bg); color: var(--badge-accent-fg); border-color: rgba(103, 232, 249, 0.3); }
+.badge--violet { background: var(--badge-violet-bg); color: var(--badge-violet-fg); border-color: rgba(168, 85, 247, 0.32); }
 
 .chip {
   display: inline-flex;
@@ -537,14 +542,14 @@
 }
 
 button.chip:hover {
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   color: var(--text);
 }
 
 .chip--active {
-  background: rgba(103, 232, 249, 0.14);
+  background: var(--badge-accent-bg);
   border-color: rgba(103, 232, 249, 0.45);
-  color: var(--cyan);
+  color: var(--badge-accent-fg);
 }
 
 .chip__remove {
@@ -610,15 +615,18 @@ button.chip:hover {
 .glyph--lg { width: 60px; height: 60px; border-radius: var(--r-md); }
 .glyph--sm { width: 32px; height: 32px; }
 
-.glyph--pdf { color: #fb7185; border-color: rgba(251, 113, 133, 0.3); }
-.glyph--document { color: #7dd3fc; border-color: rgba(125, 211, 252, 0.28); }
-.glyph--spreadsheet { color: #34d399; border-color: rgba(52, 211, 153, 0.3); }
-.glyph--presentation { color: #fbbf24; border-color: rgba(251, 191, 36, 0.3); }
-.glyph--image { color: #c084fc; border-color: rgba(192, 132, 252, 0.3); }
-.glyph--archive { color: #fca5a5; border-color: rgba(252, 165, 165, 0.28); }
-.glyph--audio { color: #f0abfc; border-color: rgba(240, 171, 252, 0.28); }
-.glyph--video { color: #67e8f9; border-color: rgba(103, 232, 249, 0.3); }
-.glyph--code { color: #a5b4fc; border-color: rgba(165, 180, 252, 0.3); }
+/* The file-type letters are small bold text, so they answer to the same 4.5:1
+   bar as any other label. These were hardcoded for a near-black tile and
+   measured as low as 1.28:1 once the tile turned pale. */
+.glyph--pdf { color: var(--glyph-pdf); border-color: rgba(251, 113, 133, 0.3); }
+.glyph--document { color: var(--glyph-document); border-color: rgba(125, 211, 252, 0.28); }
+.glyph--spreadsheet { color: var(--glyph-spreadsheet); border-color: rgba(52, 211, 153, 0.3); }
+.glyph--presentation { color: var(--glyph-presentation); border-color: rgba(251, 191, 36, 0.3); }
+.glyph--image { color: var(--glyph-image); border-color: rgba(192, 132, 252, 0.3); }
+.glyph--archive { color: var(--glyph-archive); border-color: rgba(252, 165, 165, 0.28); }
+.glyph--audio { color: var(--glyph-audio); border-color: rgba(240, 171, 252, 0.28); }
+.glyph--video { color: var(--glyph-video); border-color: rgba(103, 232, 249, 0.3); }
+.glyph--code { color: var(--glyph-code); border-color: rgba(165, 180, 252, 0.3); }
 
 /* -- metric cards --------------------------------------------------------- */
 
@@ -807,7 +815,7 @@ button.chip:hover {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  padding: var(--space-4);
+  padding: var(--card-pad, var(--space-4));
   cursor: pointer;
   text-align: left;
   transition:
@@ -900,15 +908,86 @@ button.chip:hover {
 
 .doc-row {
   display: grid;
-  grid-template-columns: 42px minmax(0, 2.6fr) minmax(0, 1fr) 92px 96px auto;
+  /* pick | name | owner | size | downloads | updated | actions */
+  grid-template-columns: 64px minmax(0, 2.4fr) minmax(0, 1fr) 92px 96px 104px auto;
   align-items: center;
   gap: var(--space-4);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--row-pad-y, var(--space-3)) var(--space-4);
   border-bottom: 1px solid var(--line);
   cursor: pointer;
   text-align: left;
   width: 100%;
   transition: background var(--t-fast) var(--ease-out);
+}
+
+/* Checkbox and file glyph share the first column: the glyph says what kind of
+   file it is, the checkbox appears on hover or once a selection exists, so the
+   column does not carry a permanent grid of empty boxes. */
+.doc-row__pick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.doc-row__pick input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease-out);
+}
+
+.doc-row:hover .doc-row__pick input[type="checkbox"],
+.doc-row__pick input[type="checkbox"]:focus-visible,
+.doc-row__pick input[type="checkbox"]:checked,
+.doc-row__head .doc-row__pick input[type="checkbox"] {
+  opacity: 1;
+}
+
+.doc-row.selected {
+  background: var(--badge-accent-bg);
+}
+
+/* Sortable column header. A button, so it is reachable by keyboard and reads as
+   the control it is. */
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  border-radius: var(--r-xs);
+}
+
+.th-sort:hover {
+  color: var(--text);
+}
+
+.th-sort--on {
+  color: var(--accent-text);
+}
+
+/* The caret only appears on the active column, or on hover as an invitation. */
+.th-sort__caret {
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease-out);
+}
+
+.th-sort:hover .th-sort__caret,
+.th-sort--on .th-sort__caret {
+  opacity: 1;
+}
+
+.text-right {
+  justify-self: end;
+  text-align: right;
 }
 
 .doc-row:hover {
@@ -926,7 +1005,12 @@ button.chip:hover {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-dim);
-  background: var(--sunken);
+  /* Opaque, because it is sticky: a translucent header lets rows scroll through
+     it and become unreadable. */
+  background: var(--surface-2);
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
 .doc-row__head:hover {
@@ -986,12 +1070,12 @@ button.chip:hover {
 }
 
 .dropzone:hover {
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   background: rgba(103, 232, 249, 0.05);
 }
 
 .dropzone--active {
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   border-style: solid;
   background: rgba(103, 232, 249, 0.09);
   box-shadow: var(--glow-accent);
@@ -1006,7 +1090,7 @@ button.chip:hover {
   border-radius: var(--r-md);
   background: var(--surface-2);
   border: 1px solid var(--line);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .dropzone--active .dropzone__icon {
@@ -1468,7 +1552,7 @@ button.chip:hover {
   width: 18px;
   height: 18px;
   border: 2px solid var(--line-strong);
-  border-top-color: var(--accent);
+  border-top-color: var(--accent-text);
   border-radius: 50%;
   animation: spin 620ms linear infinite;
 }
@@ -1978,8 +2062,8 @@ button.chip:hover {
 }
 
 .toast__action:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--accent-text);
+  color: var(--accent-text);
 }
 
 
@@ -2023,4 +2107,61 @@ button.chip:hover {
   font-family: var(--font-sans);
   font-size: 12px;
   line-height: 1;
+}
+
+
+/* -- density -------------------------------------------------------------- */
+
+/*
+ * Row height as a preference, expressed once.
+ *
+ * Every measurement that changes with density resolves to one of these
+ * properties, so the grid, the table and the drawer cannot drift apart — the
+ * failure mode where "compact" shrinks the rows but leaves the cards untouched.
+ */
+:root {
+  --row-pad-y: var(--space-3);
+  --card-pad: var(--space-4);
+  --card-gap: var(--space-4);
+  --grid-min: 268px;
+}
+
+:root[data-density="compact"] {
+  --row-pad-y: 6px;
+  --card-pad: var(--space-3);
+  --card-gap: var(--space-3);
+  --grid-min: 232px;
+}
+
+:root[data-density="compact"] .doc-card__desc,
+:root[data-density="compact"] .doc-row__meta:empty {
+  display: none;
+}
+
+:root[data-density="compact"] .doc-card {
+  gap: var(--space-2);
+}
+
+
+/* -- active filter summary ------------------------------------------------ */
+
+.filter-summary {
+  padding-top: var(--space-1);
+}
+
+/* A chip you can dismiss. The × is part of the control rather than a nested
+   button: the whole chip means "remove this filter", so a separate hit target
+   inside it would only create a smaller, harder version of the same action. */
+.chip--removable {
+  cursor: pointer;
+  padding-right: var(--space-2);
+}
+
+.chip--removable:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.chip--removable:hover .dim {
+  color: inherit;
 }

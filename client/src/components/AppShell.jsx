@@ -43,7 +43,8 @@ export default function AppShell({ children }) {
   const toast = useToast();
   const { isDark, toggle: toggleTheme } = useTheme();
   const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const location = useLocation();
+  const { pathname } = location;
   const searchRef = useRef(null);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -166,10 +167,57 @@ export default function AppShell({ children }) {
     clearLiveNotification();
   }, [liveNotification, clearLiveNotification, toast]);
 
+  /**
+   * One search field, and the URL is where the term lives.
+   *
+   * There used to be two: this one, which only did anything when you pressed
+   * Enter and then jumped you to the library, and a second box inside the
+   * library that filtered as you typed. Same job, two behaviours, and no way to
+   * tell which you were using — the header box looked broken because typing in
+   * it appeared to do nothing.
+   *
+   * Now it filters live from anywhere. On a library route it edits that route's
+   * query so the scope you are in is preserved; anywhere else the first
+   * keystroke takes you to the library.
+   */
+  const LIBRARY_ROUTES = ["/documents", "/shared", "/starred", "/trash"];
+  const onLibraryRoute = LIBRARY_ROUTES.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`)
+  );
+
+  const applySearch = useCallback(
+    (term) => {
+      const query = new URLSearchParams(window.location.search);
+      if (term.trim()) query.set("search", term.trim());
+      else query.delete("search");
+      // A different result set starts at the beginning.
+      query.delete("page");
+
+      const target = onLibraryRoute ? pathname : "/documents";
+      const suffix = query.toString();
+      navigate(suffix ? `${target}?${suffix}` : target, { replace: onLibraryRoute });
+    },
+    [navigate, onLibraryRoute, pathname]
+  );
+
+  // Keep the field in step when the URL changes from elsewhere: the command
+  // palette, a filter chip being removed, the back button.
+  const urlSearch = new URLSearchParams(location.search || "").get("search") || "";
+  /* eslint-disable-next-line no-unused-vars */
+  useEffect(() => {
+    setSearch(urlSearch);
+  }, [urlSearch]);
+
+  // Debounced so a query is not issued per keystroke.
+  useEffect(() => {
+    if (search === urlSearch) return undefined;
+    const timer = setTimeout(() => applySearch(search), 320);
+    return () => clearTimeout(timer);
+  }, [search, urlSearch, applySearch]);
+
   const submitSearch = (event) => {
     event.preventDefault();
-    const term = search.trim();
-    navigate(term ? `/documents?search=${encodeURIComponent(term)}` : "/documents");
+    applySearch(search);
   };
 
   const storage = overview?.storage;
@@ -299,6 +347,7 @@ export default function AppShell({ children }) {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 aria-label="Search documents"
+                autoComplete="off"
               />
             </form>
 

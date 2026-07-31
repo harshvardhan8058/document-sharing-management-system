@@ -120,17 +120,173 @@ export async function runChecks({ page, base, report, shot }) {
   await shot("04-command-palette");
   await page.press("Escape");
 
-  section("Header search");
+  section("Search");
+  // There used to be two search fields with different behaviour: this one, which
+  // only acted on Enter, and one inside the library that filtered as you typed.
+  check(
+    "there is exactly one search field, in the header",
+    (await page.eval("document.querySelectorAll('input[type=search]').length")) === 1 &&
+      (await page.eval("document.querySelectorAll('header input[type=search]').length")) === 1
+  );
+
   await page.eval("document.querySelector('header input[type=search]').focus()");
   await page.fill("header input[type=search]", "roadmap");
-  await page.press("Enter");
   await page.waitFor("location.search.includes('search=roadmap')", { label: "the search to reach the URL" });
-  check("submitting it filters the library through the URL", true, await page.eval("location.pathname + location.search"));
+  check("typing filters the library, without pressing Enter", true, await page.eval("location.pathname + location.search"));
+  // The URL changing is not the same as the results arriving: wait for the list,
+  // or a slower machine asserts against the previous one.
+  let matched = false;
+  try {
+    matched = await page.waitFor("document.querySelectorAll('article.doc-card').length === 1", {
+      label: "the filtered result",
+    });
+  } catch {
+    matched = false;
+  }
   check(
     "and only the matching document comes back",
-    (await page.eval("document.querySelectorAll('article.doc-card').length")) === 1,
+    matched,
     await page.eval("[...document.querySelectorAll('.doc-card__title')].map(t=>t.innerText).join(' | ')")
   );
+  check(
+    "the term is shown as a filter you can remove",
+    await page.eval(`[...document.querySelectorAll('.chip--removable')].some(c => c.innerText.includes('roadmap'))`),
+    await page.eval(`[...document.querySelectorAll('.chip--removable')].map(c=>c.innerText.replace(/\\s+/g,' ').trim()).join(' | ')`)
+  );
+
+  section("Filters explain themselves");
+  await page.goto(`${base}/documents?search=api&category=code&visibility=public&sort=largest`);
+  await page.waitFor("document.querySelectorAll('.chip--removable').length === 3", { label: "one chip per active filter" });
+  check(
+    "each active filter gets its own removable chip",
+    true,
+    await page.eval(`[...document.querySelectorAll('.chip--removable')].map(c=>c.innerText.replace(/\\s+/g,' ').trim()).join(' | ')`)
+  );
+  await page.clickText(".chip--removable", "public");
+  await page.waitFor("!location.search.includes('visibility')", { label: "that one filter to be removed" });
+  check(
+    "removing one leaves the others alone",
+    (await page.eval("document.querySelectorAll('.chip--removable').length")) === 2 &&
+      (await page.eval("location.search.includes('search=api') && location.search.includes('category=code')")),
+    await page.eval("location.search")
+  );
+
+  await page.clickText("button", "clear all");
+  await page.waitFor("!location.search.includes('search=')", { label: "the filters to clear" });
+  check(
+    "clearing the filters keeps the sort order, which is not a filter",
+    await page.eval("location.search.includes('sort=largest')"),
+    await page.eval(`location.search || '(empty)'`)
+  );
+
+  section("Facets stay scannable");
+  await openLibrary();
+  const tagChips = () =>
+    page.eval(
+      `[...document.querySelectorAll('.chip')].filter(c => c.querySelector('svg') && !c.className.includes('removable')).length`
+    );
+  const collapsed = await tagChips();
+  check("tag facets are collapsed rather than wrapping onto a second row", collapsed <= 7, `${collapsed} shown`);
+  const expander = await page.eval(`(document.querySelector('button.link-quiet')?.innerText || '').trim()`);
+  check("with a way to see the rest", /more/i.test(expander), expander);
+  await page.clickText("button.link-quiet", "more");
+  await page.waitFor(`[...document.querySelectorAll('.chip')].filter(c => c.querySelector('svg') && !c.className.includes('removable')).length > ${collapsed}`, {
+    label: "the remaining tags",
+  });
+  check("expanding shows them all", (await tagChips()) > collapsed, `${await tagChips()} shown`);
+
+  // -------------------------------------------------------------- table view
+  section("The table view is a table");
+  await openLibrary();
+  await page.clickText("button", "list");
+  await page.waitFor("document.querySelectorAll('.doc-row:not(.doc-row__head)').length === 5", { label: "table rows" });
+  check(
+    "columns are real headers, not decoration",
+    await page.eval(`[...document.querySelectorAll('[role=columnheader]')].map(h=>h.innerText.trim()).filter(Boolean).join(',')`),
+    await page.eval(`[...document.querySelectorAll('[role=columnheader]')].map(h=>h.innerText.trim()).filter(Boolean).join(' | ')`)
+  );
+  check(
+    "the header stays put while rows scroll",
+    (await page.eval(`getComputedStyle(document.querySelector('.doc-row__head')).position`)) === "sticky"
+  );
+
+  const titles = () =>
+    page.eval(`[...document.querySelectorAll('.doc-row__title')].map(t=>t.innerText.trim()).join('|')`);
+  const beforeSort = await titles();
+  await page.clickText(".th-sort", "name");
+  await page.waitFor("location.search.includes('sort=name')", { label: "the sort to reach the URL" });
+  await page.waitFor(`[...document.querySelectorAll('.doc-row__title')].map(t=>t.innerText.trim()).join('|') !== ${JSON.stringify(beforeSort)}`, {
+    label: "the rows to reorder",
+  });
+  check("clicking a column sorts by it, through the URL", true, await page.eval("location.search"));
+  check(
+    "and reports the direction it actually applied",
+    (await page.eval(
+      `document.querySelector('[role=columnheader][aria-sort]:not([aria-sort=none])')?.getAttribute('aria-sort')`
+    )) === "ascending",
+    // A-Z is ascending; reporting it as descending is wrong to a screen reader
+    // and points the caret the wrong way.
+    await page.eval(`[...document.querySelectorAll('[role=columnheader][aria-sort]')].map(h=>h.innerText.trim()+'='+h.getAttribute('aria-sort')).join(', ')`)
+  );
+  await page.clickText(".th-sort", "name");
+  await page.waitFor("location.search.includes('sort=name-desc')", { label: "the reverse sort" });
+  check(
+    "clicking again reverses it",
+    (await page.waitFor(
+      `document.querySelector('[role=columnheader][aria-sort=descending]')?.getAttribute('aria-sort') || false`,
+      { label: "the header to report descending" }
+    )) === "descending"
+  );
+  // Re-ordering must not empty the table: same documents, different order.
+  check(
+    "and the rows stay on screen while it re-sorts",
+    (await page.eval("document.querySelectorAll('.doc-row:not(.doc-row__head)').length")) === 5
+  );
+
+  // Selection was impossible in this view: the rows had no checkbox, so the bulk
+  // bar was unreachable for anyone who preferred a dense list.
+  await page.eval(`document.querySelector('.doc-row:not(.doc-row__head) input[type=checkbox]').click(); return 1`);
+  check(
+    "rows can be selected, so bulk actions work here too",
+    /1 document selected/.test(
+      await page.waitFor("(document.querySelector('[class*=bulk]')?.innerText || '').replace(/\\s+/g,' ')", {
+        label: "the bulk bar",
+      })
+    )
+  );
+  await page.eval(`document.querySelector('.doc-row__head input[type=checkbox]').click(); return 1`);
+  check(
+    "and the header checkbox selects the page",
+    /5 documents selected/.test(
+      await page.waitFor(
+        "/5 documents selected/.test(document.querySelector('[class*=bulk]')?.innerText || '') && document.querySelector('[class*=bulk]').innerText.replace(/\\s+/g,' ')",
+        { label: "a full-page selection" }
+      )
+    )
+  );
+  await shot("05-table");
+
+  section("Density is a preference, and it is remembered");
+  const rowHeight = () =>
+    page.eval(`Math.round(document.querySelector('.doc-row:not(.doc-row__head)').getBoundingClientRect().height)`);
+  const comfortable = await rowHeight();
+  await page.clickText("button", "comfortable");
+  await page.waitFor("document.documentElement.dataset.density === 'compact'", { label: "compact density" });
+  const compact = await rowHeight();
+  check("compact really is shorter", compact < comfortable, `${comfortable}px -> ${compact}px`);
+  await shot("06-table-compact");
+  await page.goto(`${base}/documents`);
+  check(
+    "and it survives a reload",
+    (await page.waitFor("document.documentElement.dataset.density === 'compact' && 'compact'", {
+      label: "density to be restored",
+    })) === "compact"
+  );
+  // Back to comfortable so later screenshots are the default experience.
+  await page.clickText("button", "compact");
+  await page.waitFor("document.documentElement.dataset.density === 'comfortable'", { label: "comfortable density" });
+  await page.clickText("button", "grid");
+  await page.waitFor("document.querySelectorAll('article.doc-card').length > 0", { label: "the grid to return" });
 
   // -------------------------------------------------------- bulk actions/undo
   section("Selection and bulk actions");
@@ -371,7 +527,7 @@ export async function runChecks({ page, base, report, shot }) {
   // ------------------------------------------------------------ content search
   section("Search inside files");
   await openLibrary();
-  await page.fill("main input[type=search]", "truthy");
+  await page.fill("header input[type=search]", "truthy");
   await page.waitFor("document.querySelectorAll('article.doc-card').length === 0", {
     label: "the metadata search to come back empty",
   });

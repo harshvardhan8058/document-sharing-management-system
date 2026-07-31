@@ -136,8 +136,16 @@ export function WorkspaceProvider({ children }) {
       "comment.created": () => setCommentRevision((value) => value + 1),
       "comment.updated": () => setCommentRevision((value) => value + 1),
       "comment.deleted": () => setCommentRevision((value) => value + 1),
+
+      /*
+       * The stream is dropped while a tab is hidden, so anything raised in the
+       * meantime was missed. Re-reading the count on reconnect is what makes that
+       * safe: the notifications themselves are stored server-side, so the stream
+       * only ever has to deliver the news sooner, never at all.
+       */
+      ready: () => reloadUnread(),
     }),
-    []
+    [reloadUnread]
   );
 
   const { connected } = useEventStream(isAuthenticated, handlers.current);

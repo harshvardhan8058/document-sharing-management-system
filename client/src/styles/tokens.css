@@ -18,7 +18,9 @@
 
   --text: #e8edff;
   --text-muted: #9aa8d0;
-  --text-dim: #6b7aa6;
+  /* 4.75:1 on the darkest surface it is used on. The previous #6b7aa6 measured
+     3.90:1 — under AA for ordinary text, which is what it is used for. */
+  --text-dim: #7889b6;
 
   --cyan: #67e8f9;
   --violet: #a855f7;
@@ -29,6 +31,58 @@
 
   --accent: var(--cyan);
   --accent-2: var(--violet);
+
+  /*
+   * Two accents, deliberately.
+   *
+   * `--accent` is for glows, gradients and fills, where brightness is the point.
+   * `--accent-text` is for words and icons, where legibility is, and in a light
+   * theme those pull in opposite directions: the same cyan that sings against
+   * near-black measures 3.26:1 on white. Collapsing them into one token is how
+   * the light theme ended up with unreadable labels.
+   */
+  --accent-text: var(--cyan);
+
+  /* Boundaries that identify a control — inputs, selects, outlined buttons —
+     as opposed to hairlines that merely group things. WCAG 1.4.11 applies to
+     the former, so this clears 3:1 against every surface it sits on while
+     `--line` stays decorative. */
+  --border-control: rgba(126, 156, 255, 0.62);
+  --focus-ring: var(--cyan);
+
+  /*
+   * Badge tones: a foreground and its tint, as a pair.
+   *
+   * These used to be hardcoded in the variant rules — `.badge--internal` set
+   * `#a8c4ff`, chosen against a near-black panel — so the light theme inherited
+   * pale text on a pale tint and the "TEAM" badge all but disappeared. Pairing
+   * them as tokens means a theme overrides both together or neither.
+   */
+  --badge-neutral-fg: var(--text-muted);
+  --badge-neutral-bg: rgba(126, 156, 255, 0.1);
+  --badge-info-fg: #c3d5ff;
+  --badge-info-bg: rgba(91, 140, 255, 0.16);
+  --badge-success-fg: #34d399;
+  --badge-success-bg: rgba(52, 211, 153, 0.14);
+  --badge-warning-fg: #fbbf24;
+  --badge-warning-bg: rgba(251, 191, 36, 0.14);
+  --badge-danger-fg: #fb7185;
+  --badge-danger-bg: rgba(251, 113, 133, 0.14);
+  --badge-accent-fg: #67e8f9;
+  --badge-accent-bg: rgba(103, 232, 249, 0.14);
+  --badge-violet-fg: #d8b4fe;
+  --badge-violet-bg: rgba(168, 85, 247, 0.16);
+
+  /* File-type letters on the glyph tile. Bright against a dark tile. */
+  --glyph-pdf: #fb7185;
+  --glyph-document: #7dd3fc;
+  --glyph-spreadsheet: #34d399;
+  --glyph-presentation: #fbbf24;
+  --glyph-image: #c084fc;
+  --glyph-archive: #fca5a5;
+  --glyph-audio: #f0abfc;
+  --glyph-video: #67e8f9;
+  --glyph-code: #a5b4fc;
 
   --success: #34d399;
   --warning: #fbbf24;
@@ -130,7 +184,8 @@
 
   --text: #101838;
   --text-muted: #4a5878;
-  --text-dim: #6f7d9d;
+  /* 4.61:1 on the lightest surface. #6f7d9d measured 3.65:1. */
+  --text-dim: #5f6d88;
 
   --cyan: #0891b2;
   --violet: #7c3aed;
@@ -138,6 +193,39 @@
   --mint: #059669;
   --amber: #b45309;
   --rose: #e11d48;
+
+  /* Bright enough to fill with, too light to read: 3.26:1 on a panel. Words get
+     a darker shade. */
+  --accent-text: #0e7490;
+  --border-control: rgba(37, 61, 122, 0.62);
+  --focus-ring: #1d4ed8;
+
+  --badge-neutral-fg: var(--text-muted);
+  --badge-neutral-bg: rgba(37, 61, 122, 0.1);
+  --badge-info-fg: #1a44b8;
+  --badge-info-bg: rgba(91, 140, 255, 0.16);
+  --badge-success-fg: #065f46;
+  --badge-success-bg: rgba(5, 150, 105, 0.14);
+  --badge-warning-fg: #92400e;
+  --badge-warning-bg: rgba(180, 83, 9, 0.14);
+  --badge-danger-fg: #be123c;
+  --badge-danger-bg: rgba(225, 29, 72, 0.14);
+  --badge-accent-fg: #155e75;
+  --badge-accent-bg: rgba(8, 145, 178, 0.14);
+  --badge-violet-fg: #6b21a8;
+  --badge-violet-bg: rgba(124, 58, 237, 0.16);
+
+  /* Same hues, taken down until the letters are legible on a pale tile. Every
+     one of the dark-theme values failed here, the worst at 1.28:1. */
+  --glyph-pdf: #be123c;
+  --glyph-document: #075985;
+  --glyph-spreadsheet: #065f46;
+  --glyph-presentation: #854d0e;
+  --glyph-image: #7e22ce;
+  --glyph-archive: #b91c1c;
+  --glyph-audio: #a21caf;
+  --glyph-video: #155e75;
+  --glyph-code: #4338ca;
 
   --glass-bg: rgba(255, 255, 255, 0.76);
   --glass-bg-solid: rgba(255, 255, 255, 0.97);

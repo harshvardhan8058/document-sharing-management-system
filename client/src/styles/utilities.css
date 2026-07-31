@@ -39,7 +39,7 @@
 .danger { color: var(--danger); }
 .success { color: var(--success); }
 .warning { color: var(--warning); }
-.accent { color: var(--accent); }
+.accent { color: var(--accent-text); }
 
 .w-100 { width: 100%; }
 .nums { font-variant-numeric: tabular-nums; }
@@ -109,7 +109,7 @@
 }
 
 .link-quiet:hover {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .clickable {

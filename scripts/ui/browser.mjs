@@ -139,12 +139,25 @@ export class Page {
       // case, not an error.
     }
 
+    /*
+     * Wait for the *target* document, not merely for a complete one.
+     *
+     * `readyState` alone is not enough: the tab starts on `about:blank`, which is
+     * already "complete", so a first navigation would appear to finish before it
+     * had begun — and the next command would run against the blank page, where
+     * even reading localStorage throws a SecurityError.
+     */
+    const want = url.replace(/\/+$/, "");
     for (let attempt = 0; attempt < 80; attempt += 1) {
       await sleep(250);
       try {
-        if ((await this.eval("document.readyState")) === "complete") break;
+        const arrived = await this.eval(`
+          const here = location.href.replace(/\\/+$/, '');
+          return document.readyState === 'complete' && (here === ${JSON.stringify(want)} || here.startsWith(${JSON.stringify(want)}));
+        `);
+        if (arrived) break;
       } catch {
-        // Still swapping documents.
+        // Execution context destroyed mid-navigation: expected.
       }
     }
     await sleep(settleMs);

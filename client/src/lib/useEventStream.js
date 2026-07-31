@@ -45,6 +45,9 @@ export function useEventStream(enabled, handlers) {
 
     async function open() {
       if (cancelled) return;
+      // A tab that was hidden between scheduling a retry and running it should
+      // not quietly take a connection back.
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
 
       try {
         const { ticket } = await api.notifications.streamTicket();
@@ -55,6 +58,9 @@ export function useEventStream(enabled, handlers) {
         source.addEventListener("ready", () => {
           attempt = 0;
           setConnected(true);
+          // Forwarded, so a consumer can catch up on whatever it missed while
+          // the stream was down or the tab was hidden.
+          handlersRef.current?.ready?.();
         });
 
         for (const event of [
@@ -100,10 +106,53 @@ export function useEventStream(enabled, handlers) {
       }, delay);
     }
 
-    open();
+    /**
+     * Hold the stream only while the tab is actually being looked at.
+     *
+     * An open EventSource occupies one of the six connections a browser will make
+     * to a single origin over HTTP/1.1, and it never gives it back. Measured: with
+     * five streams open from one origin, ordinary requests stop being sent at all
+     * — so a handful of tabs left open would leave every one of them unable to
+     * load a document.
+     *
+     * Nothing is lost by disconnecting a hidden tab. Notifications are persisted
+     * server-side precisely so the stream is an optimisation rather than the
+     * source of truth: on becoming visible again the stream reopens and the unread
+     * count is re-read, which catches up anything raised in the meantime.
+     *
+     * The real fix for many tabs is HTTP/2, where all of this multiplexes over one
+     * connection. This makes the HTTP/1.1 case survivable rather than pretending
+     * it is solved.
+     */
+    const visible = () => typeof document === "undefined" || document.visibilityState !== "hidden";
+
+    function suspend() {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+      source?.close();
+      source = null;
+      setConnected(false);
+    }
+
+    function onVisibilityChange() {
+      if (cancelled) return;
+      if (visible()) {
+        if (!source) {
+          // Straight back in: this is a deliberate resume, not a failure.
+          attempt = 0;
+          open();
+        }
+      } else {
+        suspend();
+      }
+    }
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    if (visible()) open();
 
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       clearTimeout(retryTimer);
       source?.close();
       setConnected(false);

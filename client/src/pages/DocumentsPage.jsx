@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button, Chip, ConfirmDialog, Empty, IconButton, Input, Segmented, Select, Skeleton } from "../components/ui";
+import { Alert, Button, Chip, ConfirmDialog, Empty, IconButton, Segmented, Select, Skeleton } from "../components/ui";
 import { DocumentCard, DocumentRow, DocumentRowHeader } from "../components/DocumentTile";
 import BulkBar from "../components/BulkBar";
 import QuickLook from "../components/QuickLook";
@@ -21,9 +21,12 @@ const SORTS = [
   { value: "largest", label: "Largest first" },
   { value: "smallest", label: "Smallest first" },
   { value: "downloads", label: "Most downloaded" },
+  { value: "downloads-asc", label: "Least downloaded" },
+  { value: "updated-asc", label: "Least recently updated" },
 ];
 
 const VIEW_KEY = "dsms.view";
+const DENSITY_KEY = "dsms.density";
 
 const SCOPE_COPY = {
   all: {
@@ -78,10 +81,36 @@ export default function DocumentsPage({ scope = "all" }) {
       return "grid";
     }
   });
-  const [searchDraft, setSearchDraft] = useState(params.get("search") || "");
+
+  /**
+   * Row height. A preference, so it is remembered rather than re-chosen.
+   *
+   * People who live in a file list want to see thirty rows at once; people who
+   * visit it occasionally want the extra breathing room. Applied as a data
+   * attribute driving custom properties, so grid and table stay in step instead
+   * of each growing their own spacing rules.
+   */
+  const [density, setDensity] = useState(() => {
+    try {
+      return window.localStorage.getItem(DENSITY_KEY) === "compact" ? "compact" : "comfortable";
+    } catch {
+      return "comfortable";
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(DENSITY_KEY, density);
+    } catch {
+      /* a blocked localStorage should not break the page */
+    }
+    document.documentElement.dataset.density = density;
+    return () => {
+      delete document.documentElement.dataset.density;
+    };
+  }, [density]);
   const [confirmEmpty, setConfirmEmpty] = useState(false);
   const [emptying, setEmptying] = useState(false);
-  const firstRender = useRef(true);
 
   const search = params.get("search") || "";
   const category = params.get("category") || "";
@@ -135,39 +164,28 @@ export default function DocumentsPage({ scope = "all" }) {
     }
   }, [view]);
 
-  // Keep the input in step when the URL changes from elsewhere (command palette,
-  // topbar search, back button) without fighting the user's typing.
-  useEffect(() => {
-    setSearchDraft(search);
-  }, [search]);
-
-  // Debounce the search box into the query string.
-  useEffect(() => {
-    if (firstRender.current) {
-      firstRender.current = false;
-      return undefined;
-    }
-    if (searchDraft === search) return undefined;
-
-    const timer = setTimeout(() => {
-      const next = new URLSearchParams(params);
-      if (searchDraft.trim()) next.set("search", searchDraft.trim());
-      else next.delete("search");
-      next.delete("page");
-      setParams(next);
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [searchDraft, search, params, setParams]);
+  /*
+   * The search term is read from the URL and owned by the field in the header.
+   * This page used to keep its own draft and debounce it into the query string,
+   * which is what made two boxes possible in the first place.
+   */
 
   /**
    * Identity of the current query. Two loads with the same key are the same
    * question asked twice; a different key is a different question.
    */
+  /*
+   * Deliberately excludes `sort`.
+   *
+   * Re-ordering asks for the same documents in a different order, so the rows on
+   * screen are still the right answer and blanking them is a worse experience
+   * than briefly showing a stale order — especially in the table, where clicking
+   * a column made the whole table vanish and reappear. Anything that can change
+   * *which* documents come back still clears the list.
+   */
   const queryKey = useMemo(
-    () =>
-      JSON.stringify({ scope, search, category, tag, visibility, sort, page, collectionId, inContent }),
-    [scope, search, category, tag, visibility, sort, page, collectionId, inContent]
+    () => JSON.stringify({ scope, search, category, tag, visibility, page, collectionId, inContent }),
+    [scope, search, category, tag, visibility, page, collectionId, inContent]
   );
   const loadedKey = useRef(null);
 
@@ -209,6 +227,8 @@ export default function DocumentsPage({ scope = "all" }) {
     load();
   }, [load, revision]);
 
+  const [showAllTags, setShowAllTags] = useState(false);
+
   const setParam = (key, value) => {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value);
@@ -217,12 +237,55 @@ export default function DocumentsPage({ scope = "all" }) {
     setParams(next);
   };
 
+  /**
+   * Drop the filters, keep the way you are looking at things.
+   *
+   * `setParams({})` also reset the sort order, which is not a filter: asking for
+   * "largest first" and then clearing a tag would silently put you back on
+   * "newest first". Sort and page survive; page resets because the results are
+   * different now.
+   */
   const clearFilters = () => {
-    setSearchDraft("");
-    setParams({});
+    const next = new URLSearchParams();
+    const keptSort = params.get("sort");
+    if (keptSort) next.set("sort", keptSort);
+    setParams(next);
   };
 
-  const activeFilterCount = [search, category, tag, visibility, collectionId].filter(Boolean).length;
+  /**
+   * Each active filter, with the means to remove just that one.
+   *
+   * Built here rather than in the markup so the summary and the "clear" logic
+   * cannot disagree about what counts as a filter — the count in the toolbar
+   * already listed five things while the reset button cleared every query
+   * parameter including the sort order.
+   */
+  const activeFilters = useMemo(() => {
+    const list = [];
+    const drop = (key) => () => setParam(key, "");
+
+    if (search) list.push({ key: "search", label: "matching", value: `“${search}”`, clear: drop("search") });
+    if (category) list.push({ key: "category", label: "type", value: categoryLabel(category), clear: drop("category") });
+    if (tag) list.push({ key: "tag", label: "tag", value: tag, clear: drop("tag") });
+    if (visibility) {
+      const labels = { private: "Private", internal: "Team", public: "Public" };
+      list.push({ key: "visibility", label: "visibility", value: labels[visibility] || visibility, clear: drop("visibility") });
+    }
+    if (collectionId) {
+      const found = collections.find((entry) => entry.id === collectionId);
+      list.push({
+        key: "collection",
+        label: "in",
+        value: found ? found.name : "collection",
+        clear: drop("collectionId"),
+      });
+    }
+    if (inContent) {
+      list.push({ key: "inContent", label: "searching", value: "file contents", clear: drop("inContent") });
+    }
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, category, tag, visibility, collectionId, inContent, collections, params]);
 
   async function toggleStar(doc) {
     // Optimistic: flip locally, roll back if the server disagrees.
@@ -444,6 +507,13 @@ export default function DocumentsPage({ scope = "all" }) {
   );
 
   const tags = state.facets?.tags || [];
+
+  /* Declared here, immediately after `tags`: these derive from it, and hoisting
+     them to the top of the component put a `const` reference before its
+     initialiser, which is a ReferenceError at render rather than a lint nit. */
+  const TAG_LIMIT = 6;
+  const visibleTags = showAllTags ? tags : tags.slice(0, TAG_LIMIT);
+  const hiddenTagCount = Math.max(0, tags.length - TAG_LIMIT);
   const meta = state.meta;
 
   return (
@@ -488,6 +558,19 @@ export default function DocumentsPage({ scope = "all" }) {
               { value: "list", label: "List", icon: "list" },
             ]}
           />
+
+          {/* Spelled out rather than an icon: the only sensible glyphs for
+              density are rows and a grid, and both are already taken by the
+              layout switch immediately to the left. */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setDensity(density === "compact" ? "comfortable" : "compact")}
+            aria-pressed={density === "compact"}
+            title="Row height"
+          >
+            {density === "compact" ? "Compact" : "Comfortable"}
+          </Button>
           {isTrash ? (
             <Button
               variant="danger"
@@ -507,16 +590,6 @@ export default function DocumentsPage({ scope = "all" }) {
 
       <div className="panel panel--tight col gap-3">
         <div className="toolbar">
-          <div className="toolbar__grow">
-            <Input
-              icon="search"
-              type="search"
-              placeholder={`Search ${copy.title.toLowerCase()}…`}
-              value={searchDraft}
-              onChange={(event) => setSearchDraft(event.target.value)}
-              aria-label="Search documents"
-            />
-          </div>
 
           <Select value={sort} onChange={(event) => setParam("sort", event.target.value)} aria-label="Sort by" style={{ width: "auto" }}>
             {SORTS.map((option) => (
@@ -551,11 +624,9 @@ export default function DocumentsPage({ scope = "all" }) {
             <span className="text-xs">Search contents</span>
           </label>
 
-          {activeFilterCount ? (
-            <Button variant="ghost" size="sm" icon="close" onClick={clearFilters}>
-              Clear {activeFilterCount}
-            </Button>
-          ) : null}
+          {/* Clearing lives with the chips that show what would be cleared,
+              immediately below. Two "clear" controls side by side is the same
+              duplication as the two search boxes. */}
 
           <IconButton
             icon="refresh"
@@ -564,6 +635,35 @@ export default function DocumentsPage({ scope = "all" }) {
             className={state.status === "refreshing" ? "icon-btn--active" : ""}
           />
         </div>
+
+        {/*
+          What is currently narrowing the list, and how to undo any one of it.
+          Before this the only affordance was "Clear 3", which is all-or-nothing:
+          you could see that three filters were active but not which, and undoing
+          one meant clearing everything and starting again.
+        */}
+        {activeFilters.length ? (
+          <div className="row wrap gap-2 items-center filter-summary">
+            <span className="text-xs dim">Filtered by</span>
+            {activeFilters.map((filter) => (
+              <button
+                key={filter.key}
+                type="button"
+                className="chip chip--active chip--removable"
+                onClick={filter.clear}
+                title={`Remove this filter`}
+              >
+                <span className="dim">{filter.label}</span> {filter.value}
+                <Icon name="close" size={11} strokeWidth={2.5} />
+              </button>
+            ))}
+            {activeFilters.length > 1 ? (
+              <button type="button" className="link-quiet text-xs" onClick={clearFilters}>
+                Clear all
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {categories.length > 1 || tags.length ? (
           <div className="row wrap gap-2">
@@ -587,7 +687,13 @@ export default function DocumentsPage({ scope = "all" }) {
             {tags.length ? (
               <>
                 {categories.length > 1 ? <span className="divider--v" /> : null}
-                {tags.slice(0, 12).map((item) => (
+                {/*
+                  Tags are collapsed past a handful. Fifteen of them at identical
+                  weight wrapped onto a second row and read as decoration rather
+                  than as controls — and the count that matters, the type
+                  breakdown, was lost in the middle of it.
+                */}
+                {visibleTags.map((item) => (
                   <Chip
                     key={item}
                     active={tag === item}
@@ -596,6 +702,16 @@ export default function DocumentsPage({ scope = "all" }) {
                     <Icon name="filter" size={10} /> {item}
                   </Chip>
                 ))}
+                {hiddenTagCount ? (
+                  <button
+                    type="button"
+                    className="link-quiet text-xs"
+                    onClick={() => setShowAllTags((open) => !open)}
+                    aria-expanded={showAllTags}
+                  >
+                    {showAllTags ? "Fewer tags" : `+${hiddenTagCount} more`}
+                  </button>
+                ) : null}
               </>
             ) : null}
           </div>
@@ -679,16 +795,27 @@ export default function DocumentsPage({ scope = "all" }) {
               )}
             </div>
           ) : (
-            <div className="panel panel--flush">
-              <DocumentRowHeader />
-              {state.documents.map((doc) => (
+            <div className="panel panel--flush" role="table" aria-label={copy.title} aria-rowcount={meta?.total ?? -1}>
+              <DocumentRowHeader
+                sort={sort}
+                onSort={(next) => setParam("sort", next)}
+                allSelected={selection.allSelected}
+                someSelected={selection.active}
+                onToggleAll={() => (selection.allSelected ? selection.clear() : selection.selectAll())}
+              />
+              {state.documents.map((doc, index) => (
                 <DocumentRow
                   key={doc.id}
                   document={doc}
+                  focused={cursor === index}
                   onOpen={openDocument}
                   onToggleStar={toggleStar}
                   onDownload={download}
                   onShare={openShare}
+                  selected={selection.isSelected(doc.id)}
+                  selectionMode={selection.active}
+                  onToggleSelect={(target) => selection.toggle(target.id)}
+                  dragIds={selection.isSelected(doc.id) ? selection.selectedIds : [doc.id]}
                 />
               ))}
             </div>
@@ -696,10 +823,10 @@ export default function DocumentsPage({ scope = "all" }) {
         ) : (
           <div className="panel">
             <Empty
-              icon={activeFilterCount ? "search" : copy.emptyIcon}
-              title={activeFilterCount ? "No documents match your filters" : copy.emptyTitle}
+              icon={activeFilters.length ? "search" : copy.emptyIcon}
+              title={activeFilters.length ? "No documents match your filters" : copy.emptyTitle}
               action={
-                activeFilterCount ? (
+                activeFilters.length ? (
                   <Button variant="outline" icon="close" onClick={clearFilters}>
                     Clear filters
                   </Button>
@@ -710,7 +837,7 @@ export default function DocumentsPage({ scope = "all" }) {
                 ) : null
               }
             >
-              {activeFilterCount ? "Try a different search term or remove a filter." : copy.emptyText}
+              {activeFilters.length ? "Try a different search term or remove a filter." : copy.emptyText}
             </Empty>
           </div>
         )

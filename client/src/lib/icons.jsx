@@ -49,6 +49,7 @@ const PATHS = {
   chevronLeft: "M14.5 6.5 9 12l5.5 5.5",
   chevronRight: "M9.5 6.5 15 12l-5.5 5.5",
   chevronDown: "M6.5 9.5 12 15l5.5-5.5",
+  chevronUp: "M6.5 14.5 12 9l5.5 5.5",
   arrowRight: "M5 12h14m0 0-5.5-5.5M19 12l-5.5 5.5",
   history: "M12 8v4.5l3 1.8M3.5 12A8.5 8.5 0 1 1 6 18M3 13v-5h5",
 

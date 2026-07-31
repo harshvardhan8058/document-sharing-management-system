@@ -31,15 +31,33 @@ function buildMeta({ page, limit, total }) {
  * Translate a whitelisted `?sort=` value into a driver-agnostic sort object.
  * Unknown values fall back to newest-first instead of erroring.
  */
+/**
+ * Sort orders the API will accept, each with an explicit `_id` tie-breaker.
+ *
+ * Two reasons for the tie-breaker, and both bite in practice:
+ *
+ * 1. Ordering by a field with duplicates is not deterministic on its own. Five
+ *    documents seeded in the same second, or any two files of the same size,
+ *    can come back in a different order for each query — so paging through them
+ *    is free to show one row twice and skip another.
+ * 2. The two drivers disagreed without it. The local store's comparator already
+ *    falls back to `_id`; MongoDB makes no such promise. Same request, same
+ *    data, different page.
+ *
+ * The tie-breaker follows the primary direction so "newest first" stays
+ * newest-first among equal timestamps.
+ */
 const SORT_OPTIONS = {
-  newest: { createdAt: -1 },
-  oldest: { createdAt: 1 },
-  name: { title: 1 },
-  "name-desc": { title: -1 },
-  largest: { size: -1 },
-  smallest: { size: 1 },
-  downloads: { downloadCount: -1 },
-  updated: { updatedAt: -1 },
+  newest: { createdAt: -1, _id: -1 },
+  oldest: { createdAt: 1, _id: 1 },
+  name: { title: 1, _id: 1 },
+  "name-desc": { title: -1, _id: -1 },
+  largest: { size: -1, _id: -1 },
+  smallest: { size: 1, _id: 1 },
+  downloads: { downloadCount: -1, _id: -1 },
+  "downloads-asc": { downloadCount: 1, _id: 1 },
+  updated: { updatedAt: -1, _id: -1 },
+  "updated-asc": { updatedAt: 1, _id: 1 },
 };
 
 function readSort(value, fallback = "newest") {

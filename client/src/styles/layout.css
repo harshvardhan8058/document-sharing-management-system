@@ -308,8 +308,10 @@
 
 .grid-docs {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
-  gap: var(--space-4);
+  /* Both driven by density, so compact fits more cards per row as well as
+     making each one shorter. */
+  grid-template-columns: repeat(auto-fill, minmax(var(--grid-min, 268px), 1fr));
+  gap: var(--card-gap, var(--space-4));
 }
 
 .grid-split {

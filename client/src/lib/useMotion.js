@@ -187,7 +187,18 @@ export function withViewTransition(update) {
     update();
     return;
   }
-  document.startViewTransition(() => update());
+  /*
+   * Both promises need a handler.
+   *
+   * A transition that is superseded — navigate twice quickly, which is exactly
+   * what a keyboard user does — rejects `finished` with "Transition was skipped".
+   * That is normal, but unhandled it surfaces as an unhandled promise rejection
+   * in the console, and console noise in a working app trains people to ignore
+   * the console.
+   */
+  const transition = document.startViewTransition(() => update());
+  transition.finished.catch(() => {});
+  transition.ready.catch(() => {});
 }
 
 /**
