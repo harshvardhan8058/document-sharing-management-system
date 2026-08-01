@@ -18,6 +18,7 @@ import {
 import FileGlyph from "./FileGlyph";
 import DocumentPreview from "./DocumentPreview";
 import CommentsPanel from "./CommentsPanel";
+import VersionDiff from "./VersionDiff";
 import { Icon } from "../lib/icons";
 import { api } from "../lib/api";
 import { useToast } from "../context/ToastContext";
@@ -25,6 +26,7 @@ import { useFocusTrap } from "../lib/useFocusTrap";
 import {
   categoryLabel,
   copyText,
+  isTextDocument,
   formatBytes,
   formatDate,
   formatNumber,
@@ -54,6 +56,7 @@ export default function DocumentDrawer({ documentId, onClose, onChanged, onShare
   const [busyAction, setBusyAction] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(null);
   const [selectedVersion, setSelectedVersion] = useState(undefined);
+  const [comparing, setComparing] = useState(false);
 
   const [form, setForm] = useState({ title: "", description: "", visibility: "private", tags: [] });
   const [tagDraft, setTagDraft] = useState("");
@@ -443,6 +446,23 @@ export default function DocumentDrawer({ documentId, onClose, onChanged, onShare
                     Switch back to the latest version
                   </button>
                 </Alert>
+              ) : null}
+
+              {/* Keeping every version is only half of versioning; being able to
+                  see what changed between two of them is the other half. */}
+              {detail.versions.length > 1 ? (
+                comparing ? (
+                  <VersionDiff
+                    documentId={doc.id}
+                    versions={detail.versions}
+                    isText={isTextDocument(doc)}
+                    onClose={() => setComparing(false)}
+                  />
+                ) : (
+                  <Button variant="outline" icon="history" onClick={() => setComparing(true)}>
+                    Compare versions
+                  </Button>
+                )
               ) : null}
 
               <div className="timeline">

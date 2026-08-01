@@ -7,6 +7,8 @@
  * worker by reading what it put in the cache.
  */
 
+import { sleep } from "./browser.mjs";
+
 export async function runChecks({ page, base, report, shot }) {
   const { section, check } = report;
 
@@ -482,6 +484,118 @@ export async function runChecks({ page, base, report, shot }) {
   check("the @mention is marked up, not left as plain text", await page.eval("Boolean(document.querySelector('[class*=mention]'))"));
   await shot("09-discussion");
   await page.press("Escape");
+
+  // ------------------------------------------------------------ mentions
+  section("Mentions suggest people");
+  // The previous section closed the drawer, so open a composer again.
+  await openLibrary();
+  await page.click(`[data-doc-id="${documentId}"]`);
+  await page.waitFor("Boolean(document.querySelector('.drawer__body'))", { label: "the drawer" });
+  // The drawer body renders before its detail request resolves, so the tabs are
+  // not there yet the instant it appears.
+  await page.waitFor("[...document.querySelectorAll('[role=tab]')].some(t => /discussion/i.test(t.innerText))", {
+    label: "the Discussion tab",
+  });
+  await page.clickText("[role=tab]", "discussion");
+  await page.waitFor("document.querySelectorAll('textarea').length > 0", { label: "the composer" });
+
+  // Typing a raw email address to notify a colleague is a rough edge on an
+  // otherwise finished feature.
+  const typeInto = async (selector, text) => {
+    await page.eval(`document.querySelector(${JSON.stringify(selector)}).focus(); return 1`);
+    for (const char of text) {
+      await page.send("Input.insertText", { text: char });
+      await sleep(60);
+    }
+  };
+
+  await typeInto("textarea", "Looks fine to me ");
+  check(
+    "ordinary typing does not open the list",
+    !(await page.eval("Boolean(document.querySelector('.mention-list'))"))
+  );
+
+  await typeInto("textarea", "@ri");
+  let suggestion = "";
+  try {
+    suggestion = await page.waitFor(
+      `document.querySelector('.mention-list__item')?.innerText.replace(/\\s+/g,' ').trim() || false`,
+      { label: "a suggestion" }
+    );
+  } catch {
+    suggestion = "";
+  }
+  check("typing @ suggests people from the directory", /rio@dsms\.dev/.test(suggestion), suggestion);
+
+  await page.press("Enter");
+  const composed = await page.waitFor("document.querySelector('textarea')?.value || false", {
+    label: "the composed text",
+  });
+  check("Enter completes the mention rather than posting the comment", /@rio@dsms\.dev\s?$/.test(composed), JSON.stringify(composed));
+  check("and the list closes", !(await page.eval("Boolean(document.querySelector('.mention-list'))")));
+
+  await typeInto("textarea", "and cc ada@exam");
+  await sleep(500);
+  check(
+    "an email address being typed does not trigger it",
+    !(await page.eval("Boolean(document.querySelector('.mention-list'))"))
+  );
+  await shot("11-mentions");
+
+  // ------------------------------------------------------ version comparison
+  section("Versions can be compared");
+  const versioned = await page.eval(`
+    const token = localStorage['dsms.token'];
+    const list = await fetch('/api/documents?search=Security', { headers: { Authorization: 'Bearer ' + token } }).then((r) => r.json());
+    const target = list.documents[0];
+    if (!target) return 'NO_DOCUMENT';
+
+    const original = await fetch('/api/documents/' + target.id + '/preview/text', {
+      headers: { Authorization: 'Bearer ' + token },
+    }).then((r) => r.json());
+
+    const lines = original.content.split('\\n');
+    lines.splice(3, 0, 'A line added by the interface suite.');
+    const body = new FormData();
+    body.append('file', new File([lines.join('\\n')], 'security-review.md', { type: 'text/markdown' }));
+    const res = await fetch('/api/documents/' + target.id + '/versions', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token },
+      body,
+    });
+    return res.status === 201 ? target.id : 'HTTP ' + res.status;
+  `);
+  check("a second version can be uploaded", /^[a-f0-9]{24}$/.test(versioned), versioned);
+
+  if (/^[a-f0-9]{24}$/.test(versioned)) {
+    await page.goto(`${base}/documents/${versioned}`);
+    await page.waitFor("Boolean(document.querySelector('.drawer__body'))", { label: "the drawer" });
+    await page.clickText("[role=tab]", "versions");
+    await page.waitFor("/compare versions/i.test(document.body.innerText)", { label: "the compare control" });
+    await page.clickText("button", "compare versions");
+    await page.waitFor("document.querySelectorAll('.diff__line').length > 0", { label: "the diff" });
+
+    check(
+      "the diff finds the inserted line and nothing else",
+      (await page.eval("document.querySelectorAll('.diff__line--add').length")) === 1 &&
+        (await page.eval("document.querySelectorAll('.diff__line--remove').length")) === 0,
+      await page.eval(`[...document.querySelectorAll('.diff-stat')].map(s=>s.innerText).join(' ')`)
+    );
+    check(
+      "and shows the added text itself",
+      /A line added by the interface suite\./.test(
+        await page.eval(`document.querySelector('.diff__line--add .diff__text')?.innerText || ''`)
+      )
+    );
+    check(
+      "both old and new line numbers are shown",
+      (await page.eval(
+        `[...document.querySelector('.diff__line--equal').querySelectorAll('.diff__num')].length`
+      )) === 2
+    );
+    await shot("12-version-diff");
+    await page.press("Escape");
+  }
 
   // -------------------------------------------------------- live over the wire
   section("Live notifications over Server-Sent Events");

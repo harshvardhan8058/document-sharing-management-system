@@ -5,7 +5,11 @@ import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { useWorkspace } from "../context/WorkspaceContext";
-import { relativeTime } from "../lib/format";
+import { modifierKeyLabel, relativeTime } from "../lib/format";
+import { activeMention, applyMention } from "../lib/mentions";
+
+/** Nothing suggested, nothing open. */
+const CLOSED = { open: false, query: "", items: [], index: 0 };
 
 /**
  * Render a comment body with `@mentions` highlighted.
@@ -145,6 +149,69 @@ export default function CommentsPanel({ documentId, canModerate }) {
   const [posting, setPosting] = useState(false);
   const inputRef = useRef(null);
 
+  // -- @mention autocomplete -------------------------------------------------
+
+  const [mentions, setMentions] = useState(CLOSED);
+  const mentionToken = useRef(null);
+  const lookupTimer = useRef(null);
+
+  /**
+   * Decide whether the caret is inside a mention, and if so look up people.
+   *
+   * The token is kept in a ref rather than in state: by the time a suggestion is
+   * clicked, several renders have happened, and replacing the wrong span of text
+   * is worse than not offering the feature.
+   */
+  const openMentionsFor = useCallback((text, caret) => {
+    const token = activeMention(text, caret);
+    mentionToken.current = token;
+
+    clearTimeout(lookupTimer.current);
+    if (!token) {
+      setMentions(CLOSED);
+      return;
+    }
+
+    setMentions((current) => ({ ...current, open: true, query: token.query }));
+
+    // Debounced: one request per pause, not one per keystroke.
+    lookupTimer.current = setTimeout(async () => {
+      try {
+        const { users } = await api.auth.directory(token.query);
+        // Ignore a response that arrived after the caret left the mention.
+        if (!mentionToken.current) return;
+        setMentions({ open: true, query: token.query, items: users.slice(0, 6), index: 0 });
+      } catch {
+        // A failed lookup should leave the comment box alone, not error at
+        // someone who is only typing.
+        setMentions(CLOSED);
+      }
+    }, 160);
+  }, []);
+
+  useEffect(() => () => clearTimeout(lookupTimer.current), []);
+
+  const choose = useCallback((person) => {
+    const token = mentionToken.current;
+    if (!person || !token) return;
+
+    setDraft((current) => {
+      const { text, caret } = applyMention(current, token, person.email);
+      // Put the caret back where the typing was, after React has painted.
+      requestAnimationFrame(() => {
+        const field = inputRef.current;
+        if (field) {
+          field.focus();
+          field.setSelectionRange(caret, caret);
+        }
+      });
+      return text;
+    });
+
+    mentionToken.current = null;
+    setMentions(CLOSED);
+  }, []);
+
   const load = useCallback(async () => {
     try {
       const payload = await api.comments.list(documentId);
@@ -236,26 +303,104 @@ export default function CommentsPanel({ documentId, canModerate }) {
           </div>
         ) : null}
 
-        <Textarea
-          ref={inputRef}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            // Cmd/Ctrl+Enter submits; plain Enter keeps making paragraphs.
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              event.preventDefault();
-              post();
-            }
-          }}
-          placeholder="Add a comment… use @name to notify someone"
-          rows={3}
-          maxLength={4000}
-        />
+        <div className="mention-wrap">
+          <Textarea
+            ref={inputRef}
+            value={draft}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              // Read the caret from the event, not from a later render.
+              openMentionsFor(event.target.value, event.target.selectionStart);
+            }}
+            onKeyDown={(event) => {
+              // The suggestion list owns the arrow keys and Enter while it is up,
+              // or picking a name would post the comment instead.
+              if (mentions.open && mentions.items.length) {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setMentions((current) => ({
+                    ...current,
+                    index: (current.index + 1) % current.items.length,
+                  }));
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setMentions((current) => ({
+                    ...current,
+                    index: (current.index - 1 + current.items.length) % current.items.length,
+                  }));
+                  return;
+                }
+                if (event.key === "Enter" && !event.metaKey && !event.ctrlKey) {
+                  event.preventDefault();
+                  choose(mentions.items[mentions.index]);
+                  return;
+                }
+                if (event.key === "Tab") {
+                  event.preventDefault();
+                  choose(mentions.items[mentions.index]);
+                  return;
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setMentions(CLOSED);
+                  return;
+                }
+              }
+
+              // Cmd/Ctrl+Enter submits; plain Enter keeps making paragraphs.
+              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                event.preventDefault();
+                post();
+              }
+            }}
+            onBlur={() => {
+              // Deferred: a click on a suggestion blurs the field first.
+              setTimeout(() => setMentions(CLOSED), 120);
+            }}
+            placeholder="Add a comment… type @ to notify someone"
+            rows={3}
+            maxLength={4000}
+            aria-autocomplete="list"
+            aria-expanded={mentions.open}
+          />
+
+          {mentions.open && mentions.items.length ? (
+            <ul className="mention-list" role="listbox" aria-label="People to mention">
+              {mentions.items.map((person, index) => (
+                <li key={person.id ?? person.email}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={index === mentions.index}
+                    className={`mention-list__item ${index === mentions.index ? "is-active" : ""}`}
+                    // Mouse-down, because a click would arrive after the blur
+                    // that closes this list.
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      choose(person);
+                    }}
+                    onMouseEnter={() => setMentions((current) => ({ ...current, index }))}
+                  >
+                    <Avatar name={person.fullName} email={person.email} size="sm" />
+                    <span className="col" style={{ gap: 0, minWidth: 0 }}>
+                      <span className="semi truncate">{person.fullName || person.email}</span>
+                      <span className="text-xs dim truncate">{person.email}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
 
         <div className="row between">
+          {/* The real modifier for this platform, and "Enter" spelled out: this
+              said "⌘/Ctrl + ↵" on every machine, which is wrong on Windows and
+              renders as empty boxes wherever the font lacks those glyphs. */}
           <span className="text-xs dim">
-            <span className="kbd">⌘</span>/<span className="kbd">Ctrl</span> +{" "}
-            <span className="kbd">↵</span> to post
+            <span className="kbd">{modifierKeyLabel()}</span> + <span className="kbd">Enter</span> to post
           </span>
           <Button
             variant="primary"

@@ -80,11 +80,11 @@ See [Persistence](#persistence).
 | **Documents** | Upload with size, extension **and content** limits, metadata, tags, three visibility levels. |
 | **Collections** | Flat, user-owned grouping. Drag documents onto one in the sidebar. Deleting a collection never deletes its documents. |
 | **Search inside files** | Opt-in content search over indexed text, with a highlighted excerpt showing *why* each result matched. |
-| **Discussion** | Threaded comments with `@mentions`, one level of replies, author-only editing and manager moderation. |
+| **Discussion** | Threaded comments with `@mentions` (with autocomplete from the directory), one level of replies, author-only editing and manager moderation. |
 | **Notifications** | In-app, pushed live over Server-Sent Events. A share or a mention appears without a reload. |
 | **Bulk actions** | Select many documents and trash, restore, delete or star them in one call — with **Undo** rather than a confirmation. Dragging a selection onto a collection files all of it. |
 | **Addressable documents** | Every document has its own URL, so "this one" can be sent to somebody. The link grants nothing on its own. |
-| **Versions** | Uploading a revision never overwrites history; any earlier version stays downloadable. |
+| **Versions** | Uploading a revision never overwrites history; any earlier version stays downloadable, and any two text versions can be **compared line by line**. |
 | **Sharing — people** | Grant `view` / `edit` / `manage` by email, with an optional expiry. Works before the recipient has an account. |
 | **Sharing — links** | Read-only anonymous links with optional password, expiry date and hard download cap. Revocable. |
 | **Quotas** | A per-account allowance, enforced on upload, counting every stored version and anything sitting in the trash. |
@@ -111,6 +111,21 @@ selects the page.
 
 Every animation is wrapped in a `prefers-reduced-motion` check and collapses to its final state —
 motion is decoration, and the interface is complete without it.
+
+**Versions can be compared, not just listed.** Keeping every revision is half of versioning; "v3,
+4 KB, two days ago" does not tell you whether a sentence changed or the file was replaced. Any two text
+versions diff line by line, with both old and new line numbers, unchanged runs collapsed to a labelled
+gap, and `+`/`-` in the gutter as well as colour — roughly one man in twelve cannot separate red from
+green. The algorithm is about eighty lines in `client/src/lib/diff.js`: shared head and tail are trimmed
+first, so a one-line edit in a five-thousand-line file is aligned exactly rather than approximately,
+and a comparison too large to align degrades to "this span was replaced" instead of hanging. Both sides
+are read through the existing `/preview/text?version=` endpoint, so it needed no new API surface and
+inherits that endpoint's permission check rather than inventing a second one.
+
+**`@mentions` autocomplete.** Typing `@` suggests people from the directory, with arrow keys, Enter or
+Tab to choose. The fiddly part is not the popup but deciding whether the caret is *in* a mention:
+`client/src/lib/mentions.js` is pure and unit tested, so the list does not appear halfway through
+someone typing an email address, and choosing a name does not leave a double space behind.
 
 **The list view is a table.** Sortable columns with `aria-sort`, a sticky header, right-aligned tabular
 figures for sizes and counts, selection checkboxes, and the same keyboard cursor and drag behaviour as
@@ -291,7 +306,7 @@ npm run build        # install + build the client
 npm run seed         # demo accounts and documents (safe to re-run)
 npm test             # unit tests (node:test, no test framework dependency)
 npm run verify       # 140-check end-to-end API suite against a throwaway database
-npm run verify:ui    # 68-check interface suite in a real headless browser
+npm run verify:ui    # 77-check interface suite in a real headless browser
 npm run check        # all three
 ```
 

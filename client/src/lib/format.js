@@ -11,6 +11,21 @@
  * @param {number} target   the real percentage, 0–100
  * @param {number} animated the value currently being displayed mid-animation
  */
+/**
+ * Can this document be shown, and compared, as text?
+ *
+ * One definition, used by the preview and by version comparison. It was inlined
+ * in the preview; a second copy in the diff would have been free to disagree
+ * about, say, SVG — and then a file would preview as text but refuse to diff.
+ *
+ * JSON and XML are text that browsers label as `application/*`, which is why the
+ * check is not simply "starts with text/".
+ */
+export function isTextDocument(doc) {
+  const mimeType = doc?.file?.mimeType || doc?.mimeType || "";
+  return /^text\/|^application\/(json|xml|xhtml\+xml)|\+xml$/.test(mimeType);
+}
+
 export function formatUsagePercent(target, animated = target) {
   if (!Number.isFinite(target) || target <= 0) return "0%";
   if (target < 0.1) return "<0.1%";

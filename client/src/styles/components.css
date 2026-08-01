@@ -2165,3 +2165,134 @@ button.chip:hover {
 .chip--removable:hover .dim {
   color: inherit;
 }
+
+
+/* -- version diff --------------------------------------------------------- */
+
+.diff {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--sunken);
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+}
+
+/* Two gutters of line numbers — old and new — then the marker, then the line.
+   A single gutter cannot show both sides of a comparison. */
+.diff__line {
+  display: grid;
+  grid-template-columns: 44px 44px 16px minmax(0, 1fr);
+  gap: 0;
+  align-items: start;
+}
+
+.diff__num {
+  padding: 1px var(--space-2);
+  text-align: right;
+  color: var(--text-dim);
+  background: var(--sunken-strong);
+  user-select: none;
+  border-right: 1px solid var(--line);
+}
+
+.diff__sign {
+  padding: 1px 0;
+  text-align: center;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.diff__text {
+  padding: 1px var(--space-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
+/* Colour carries the meaning, and so does the +/− sign in the gutter: about one
+   man in twelve cannot separate these two hues. */
+.diff__line--add {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+.diff__line--add .diff__sign {
+  color: var(--success);
+}
+
+.diff__line--remove {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.diff__line--remove .diff__sign {
+  color: var(--danger);
+}
+
+.diff__skip {
+  padding: 3px var(--space-3);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-xs);
+}
+
+.diff-stat {
+  font-weight: 700;
+}
+
+.diff-stat--add { color: var(--success); }
+.diff-stat--remove { color: var(--danger); }
+
+
+/* -- @mention autocomplete ------------------------------------------------ */
+
+.mention-wrap {
+  position: relative;
+}
+
+/*
+ * Anchored under the composer rather than at the caret.
+ *
+ * Following the caret inside a textarea means measuring text in a mirror element
+ * and keeping it in sync with every wrap and scroll — a lot of machinery for a
+ * list of six names that is perfectly usable in one predictable place.
+ */
+.mention-list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: var(--z-modal);
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  max-height: 232px;
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--glass-bg-solid);
+  backdrop-filter: blur(var(--glass-blur));
+  box-shadow: var(--shadow-lg);
+}
+
+.mention-list__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* One highlight, driven by the keyboard cursor. Hover moves that cursor rather
+   than lighting a second row, so there is never a question about which name
+   Enter will pick. */
+.mention-list__item.is-active {
+  background: var(--badge-accent-bg);
+}
